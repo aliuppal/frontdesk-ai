@@ -51,9 +51,9 @@ export async function createBusiness(form: FormData) {
               ${v.area_code ? Number(v.area_code) : null}, ${ON_SITE.has(v.industry)})`,
     q`insert into business_members (business_id, user_id, role) values (${businessId}, ${user.id}, 'owner')`,
     q`insert into business_hours (business_id, weekday, open_time, close_time)
-      select ${businessId}, d, '09:00', '17:00' from generate_series(1, 5) d`,
+      select ${businessId}::uuid, d, '09:00', '17:00' from generate_series(1, 5) d`,
     q`insert into services (business_id, name, duration_minutes)
-      select ${businessId}, s.name, s.duration_minutes
+      select ${businessId}::uuid, s.name, s.duration_minutes
       from jsonb_to_recordset(${JSON.stringify(services)}::jsonb) as s(name text, duration_minutes int)`,
     q`insert into staff (business_id, name, calendar_id, is_default) values (${businessId}, ${v.name}, 'primary', true)`,
   ]);

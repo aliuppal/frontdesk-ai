@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "db:migrate": "node --env-file-if-exists=.env.local scripts/migrate.mjs"
+    "db:migrate": "node --env-file-if-exists=.env.local scripts/migrate.mjs",
+    "seed:demo": "node --env-file-if-exists=.env.local scripts/seed-demo.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0",

@@ -6,7 +6,7 @@ import { signUp } from "../auth-actions";
 export const metadata = { title: "Create your account" };
 
 export default async function Signup({ searchParams }: PageProps<"/signup">) {
-  const { error } = (await searchParams) as Record<string, string | undefined>;
+  const { error, email } = (await searchParams) as Record<string, string | undefined>;
   return (
     <AuthShell
       title="Get your AI front desk"
@@ -20,11 +20,11 @@ export default async function Signup({ searchParams }: PageProps<"/signup">) {
       <form action={signUp} className="space-y-4">
         <div>
           <label className="label" htmlFor="email">Work email</label>
-          <input className="input" id="email" name="email" type="email" autoComplete="email" required />
+          <input className="input" id="email" name="email" type="email" autoComplete="email" required defaultValue={email ?? ""} />
         </div>
         <div>
           <label className="label" htmlFor="password">Password</label>
-          <input className="input" id="password" name="password" type="password" autoComplete="new-password" minLength={8} required />
+          <input className="input" id="password" name="password" type="password" autoComplete="new-password" minLength={8} required autoFocus={!!email} />
           <p className="hint">At least 8 characters.</p>
         </div>
         <button className="btn btn-primary w-full">Create account</button>

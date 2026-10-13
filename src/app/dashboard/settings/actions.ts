@@ -94,7 +94,7 @@ export async function saveHours(form: FormData) {
     await q.transaction([
       q`delete from business_hours where business_id = ${business.id}`,
       q`insert into business_hours (business_id, weekday, open_time, close_time)
-        select ${business.id}, r.weekday, r.open_time::time, r.close_time::time
+        select ${business.id}::uuid, r.weekday, r.open_time::time, r.close_time::time
         from jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) as r(weekday int, open_time text, close_time text)`,
     ]);
   } catch (err) {
@@ -154,7 +154,7 @@ export async function saveStaff(form: FormData) {
       q`delete from staff_services where staff_id = ${row.id}`,
       // Only services that belong to this business can be linked.
       q`insert into staff_services (staff_id, service_id)
-        select ${row.id}, s.id from services s where s.business_id = ${business.id} and s.id::text = any(${picked}::text[])`,
+        select ${row.id}::uuid, s.id from services s where s.business_id = ${business.id} and s.id::text = any(${picked}::text[])`,
     ]);
   } catch (err) {
     return finish("staff", { error: errorText(err) });

@@ -6,7 +6,9 @@ const nextConfig: NextConfig = {
   cacheComponents: false,
   turbopack: {
     rules: {
-      "*.css": {
+      // Only the Tailwind entry file goes through the Tailwind loader. A "*.css" glob would also catch
+      // *.module.css and its `as: "*.css"` strips CSS-module scoping (class names come back undefined).
+      "globals.css": {
         loaders: ["@tailwindcss/turbopack"],
         as: "*.css",
       },
