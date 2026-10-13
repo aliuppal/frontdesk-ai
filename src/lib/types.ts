@@ -1,4 +1,4 @@
-// Row shapes for the tables in supabase/migrations/0001_init.sql. Timestamps are ISO strings.
+// Row shapes for the tables in db/migrations/0001_init.sql. Timestamps are ISO strings.
 
 export interface Business {
   id: string;

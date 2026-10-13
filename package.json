@@ -7,11 +7,12 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "db:migrate": "node --env-file-if-exists=.env.local scripts/migrate.mjs"
   },
   "dependencies": {
-    "@supabase/ssr": "^0.12.7",
-    "@supabase/supabase-js": "^2.117.3",
+    "@neondatabase/serverless": "^1.2.0",
+    "@vercel/blob": "^2.8.1",
     "googleapis": "^185.0.0",
     "luxon": "^3.7.2",
     "next": "16.4.0",

@@ -1,47 +1,47 @@
 import "server-only";
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { redirect } from "next/navigation";
-import { supabaseServer } from "./supabase/server";
-import type { Business, BusinessConfig } from "./types";
+import { currentUser, type SessionUser } from "./auth";
+import { one, sql } from "./db";
+import type { Business, BusinessConfig, BusinessHour, Service, Staff } from "./types";
 
 /** Everything the agent and booking engine need about one business. */
-export async function loadBusinessConfig(db: SupabaseClient, businessId: string): Promise<BusinessConfig> {
-  const [business, hours, services, staff] = await Promise.all([
-    db.from("businesses").select("*").eq("id", businessId).single(),
-    db.from("business_hours").select("*").eq("business_id", businessId),
-    db.from("services").select("*").eq("business_id", businessId).order("created_at"),
-    db.from("staff").select("*").eq("business_id", businessId).order("is_default", { ascending: false }).order("created_at"),
+export async function loadBusinessConfig(businessId: string): Promise<BusinessConfig> {
+  const [business, hours, services, staff, staffServices] = await Promise.all([
+    one<Business>(sql`select * from businesses where id = ${businessId}`),
+    sql<BusinessHour>`select id, business_id, weekday, open_time::text as open_time, close_time::text as close_time
+                      from business_hours where business_id = ${businessId} order by weekday, open_time`,
+    sql<Service>`select * from services where business_id = ${businessId} order by created_at`,
+    sql<Staff>`select * from staff where business_id = ${businessId} order by is_default desc, created_at`,
+    sql<{ staff_id: string; service_id: string }>`select ss.staff_id, ss.service_id from staff_services ss
+        join staff s on s.id = ss.staff_id where s.business_id = ${businessId}`,
   ]);
-  if (business.error || !business.data) throw new Error(`Business ${businessId} not found`);
-  const staffIds = (staff.data ?? []).map((s) => s.id);
-  const staffServices = staffIds.length
-    ? ((await db.from("staff_services").select("staff_id, service_id").in("staff_id", staffIds)).data ?? [])
-    : [];
-  return {
-    business: business.data,
-    hours: hours.data ?? [],
-    services: services.data ?? [],
-    staff: staff.data ?? [],
-    staffServices,
-  };
+  if (!business) throw new Error(`Business ${businessId} not found`);
+  return { business, hours, services, staff, staffServices };
 }
 
 /** Business id behind a Retell agent. Tool calls are trusted only after signature verification. */
-export async function businessIdForAgent(db: SupabaseClient, agentId: string): Promise<string | null> {
-  const { data } = await db.from("businesses").select("id").eq("retell_agent_id", agentId).maybeSingle();
-  return data?.id ?? null;
+export async function businessIdForAgent(agentId: string): Promise<string | null> {
+  const row = await one<{ id: string }>(sql`select id from businesses where retell_agent_id = ${agentId}`);
+  return row?.id ?? null;
 }
 
-/** Signed-in owner and their business, for dashboard pages. Redirects when either is missing. */
-export async function requireBusiness(): Promise<{ business: Business; userId: string; email: string }> {
-  const db = await supabaseServer();
-  const {
-    data: { user },
-  } = await db.auth.getUser();
+/** Signed-in user, or redirect to /login. */
+export async function requireUser(): Promise<SessionUser> {
+  const user = await currentUser();
   if (!user) redirect("/login");
-  const { data: membership } = await db.from("business_members").select("business_id").eq("user_id", user.id).limit(1).maybeSingle();
-  if (!membership) redirect("/onboarding");
-  const { data: business } = await db.from("businesses").select("*").eq("id", membership.business_id).single();
+  return user;
+}
+
+/**
+ * Signed-in owner and their business, for dashboard pages and actions. Every dashboard query is then
+ * filtered by this business id, which is what keeps one business from seeing another's data.
+ */
+export async function requireBusiness(): Promise<{ business: Business; userId: string; email: string }> {
+  const user = await requireUser();
+  const business = await one<Business>(
+    sql`select b.* from businesses b join business_members m on m.business_id = b.id
+        where m.user_id = ${user.id} order by m.created_at limit 1`,
+  );
   if (!business) redirect("/onboarding");
-  return { business, userId: user.id, email: user.email ?? "" };
+  return { business, userId: user.id, email: user.email };
 }

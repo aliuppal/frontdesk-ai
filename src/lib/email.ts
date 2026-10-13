@@ -1,7 +1,7 @@
 import "server-only";
 import { Resend } from "resend";
 import { DateTime } from "luxon";
-import { appUrl, env } from "./env";
+import { appUrl, need } from "./env";
 import type { Appointment, Business } from "./types";
 
 const esc = (s: string | null | undefined) =>
@@ -23,8 +23,8 @@ function layout(title: string, rows: [string, string | null | undefined][], foot
 }
 
 async function send(to: string, subject: string, html: string, replyTo?: string) {
-  const resend = new Resend(env().RESEND_API_KEY);
-  const { error } = await resend.emails.send({ from: env().EMAIL_FROM, to, subject, html, replyTo });
+  const resend = new Resend(need("RESEND_API_KEY"));
+  const { error } = await resend.emails.send({ from: need("EMAIL_FROM"), to, subject, html, replyTo });
   if (error) throw new Error(`Email to ${to} failed: ${error.message}`);
 }
 

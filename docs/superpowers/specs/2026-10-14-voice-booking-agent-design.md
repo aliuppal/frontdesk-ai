@@ -2,6 +2,12 @@
 
 Date: 2026-10-14 · Status: architecture approved in chat, build started on request
 
+> **Update 2026-10-14:** the owner chose Neon over Supabase. Postgres now runs on Neon, login is the app's
+> own email + password with database sessions (`src/lib/auth.ts`), tenant isolation is enforced by
+> scoping every query to the session's business (no RLS), and recordings live in a private Vercel Blob
+> store streamed through `/api/recordings/[callId]`. Sections below that mention Supabase describe the
+> original plan; the data model is otherwise unchanged (`db/migrations/0001_init.sql`).
+
 ## 1. Intent
 
 A multi-tenant SaaS for US home & local service businesses (salons, spas, plumbers, HVAC, cleaners,

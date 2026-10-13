@@ -4,33 +4,32 @@ import { CallOutcome, Empty, PageHeader, Stat } from "@/components/ui";
 import { requireBusiness } from "@/lib/business";
 import { formatPhone } from "@/lib/booking/phone";
 import { fmtDateTime, fmtDay, fmtDuration, fmtTime } from "@/lib/format";
-import { supabaseAdmin, supabaseServer } from "@/lib/supabase/server";
+import { calendarConnection } from "@/lib/calendar/google";
+import { sql } from "@/lib/db";
 import type { Appointment, Call } from "@/lib/types";
 
 export const metadata = { title: "Overview" };
 
 export default async function Overview() {
   const { business: b } = await requireBusiness();
-  const db = await supabaseServer();
   const weekAgo = DateTime.now().minus({ days: 7 }).toISO();
 
-  const [weekCalls, recent, upcoming, calendar] = await Promise.all([
-    db.from("calls").select("duration_seconds, appointment_booked").eq("business_id", b.id).gte("started_at", weekAgo),
-    db.from("calls").select("*").eq("business_id", b.id).order("started_at", { ascending: false }).limit(6),
-    db.from("appointments").select("*").eq("business_id", b.id).eq("status", "booked").gte("starts_at", new Date().toISOString()).order("starts_at").limit(6),
-    // Token table has no browser policy; check it server-side for this business only.
-    supabaseAdmin().from("calendar_connections").select("business_id").eq("business_id", b.id).maybeSingle(),
+  const [calls, recentCalls, upcoming, calendar] = await Promise.all([
+    sql<{ duration_seconds: number | null; appointment_booked: boolean }>`
+      select duration_seconds, appointment_booked from calls where business_id = ${b.id} and started_at >= ${weekAgo}`,
+    sql<Call>`select * from calls where business_id = ${b.id} order by started_at desc nulls last limit 6`,
+    sql<Appointment>`select * from appointments where business_id = ${b.id} and status = 'booked' and starts_at >= now()
+                     order by starts_at limit 6`,
+    calendarConnection(b.id),
   ]);
 
-  const calls = weekCalls.data ?? [];
   const booked = calls.filter((c) => c.appointment_booked).length;
   const minutes = Math.round(calls.reduce((n, c) => n + (c.duration_seconds ?? 0), 0) / 60);
-  const recentCalls = (recent.data ?? []) as Call[];
   const callBacks = recentCalls.filter((c) => c.extracted?.follow_up_needed && !c.appointment_booked);
 
   const steps = [
     { done: true, label: "Business details added", href: "/dashboard/settings" },
-    { done: calendar.data != null, label: "Google Calendar connected", href: "/dashboard/settings#calendar" },
+    { done: calendar != null, label: "Google Calendar connected", href: "/dashboard/settings#calendar" },
     { done: !!b.phone_number, label: "Phone agent switched on", href: "/dashboard/settings#agent" },
   ];
 
@@ -108,9 +107,9 @@ export default async function Overview() {
             <h2 className="text-base">Coming up</h2>
             <Link href="/dashboard/appointments" className="text-sm text-muted hover:text-fg">All appointments →</Link>
           </div>
-          {upcoming.data?.length ? (
+          {upcoming.length ? (
             <ul>
-              {(upcoming.data as Appointment[]).map((a) => (
+              {upcoming.map((a) => (
                 <li key={a.id} className="px-5 py-3 border-t border-black/5 flex gap-4 text-sm">
                   <div className="w-24 shrink-0">
                     <div className="font-semibold">{fmtDay(a.starts_at, b.timezone)}</div>

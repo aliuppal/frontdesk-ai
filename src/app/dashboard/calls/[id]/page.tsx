@@ -5,7 +5,7 @@ import { CallOutcome } from "@/components/ui";
 import { requireBusiness } from "@/lib/business";
 import { formatPhone } from "@/lib/booking/phone";
 import { fmtDateTime, fmtDuration } from "@/lib/format";
-import { supabaseServer } from "@/lib/supabase/server";
+import { one, sql } from "@/lib/db";
 import type { Appointment, Call } from "@/lib/types";
 
 export const metadata = { title: "Call" };
@@ -21,19 +21,14 @@ const FIELDS: [string, string][] = [
 export default async function CallDetail({ params }: PageProps<"/dashboard/calls/[id]">) {
   const { id } = await params;
   const { business: b } = await requireBusiness();
-  const db = await supabaseServer();
-  const { data } = await db.from("calls").select("*").eq("id", id).eq("business_id", b.id).maybeSingle();
-  if (!data) notFound();
-  const call = data as Call;
-
-  const [recording, appts] = await Promise.all([
-    call.recording_path ? db.storage.from("recordings").createSignedUrl(call.recording_path, 60 * 60) : Promise.resolve(null),
-    db.from("appointments").select("*").eq("retell_call_id", call.retell_call_id).eq("business_id", b.id),
-  ]);
+  if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
+  const call = await one<Call>(sql`select * from calls where id = ${id} and business_id = ${b.id}`);
+  if (!call) notFound();
+  const appointments = await sql<Appointment>`
+    select * from appointments where retell_call_id = ${call.retell_call_id} and business_id = ${b.id} order by starts_at`;
 
   const turns: Turn[] = (call.transcript_json ?? []).map((t) => ({ role: t.role, content: t.content, start: t.words?.[0]?.start ?? null }));
   const name = (call.extracted?.caller_name as string) || formatPhone(call.from_number) || "Browser test call";
-  const appointments = (appts.data ?? []) as Appointment[];
 
   return (
     <>
@@ -49,7 +44,7 @@ export default async function CallDetail({ params }: PageProps<"/dashboard/calls
       </div>
 
       <div className="grid lg:grid-cols-[1fr_320px] gap-6 items-start">
-        <CallPlayer src={recording?.data?.signedUrl ?? null} turns={turns} agentName="Agent" />
+        <CallPlayer src={call.recording_path ? `/api/recordings/${call.id}` : null} turns={turns} agentName="Agent" />
 
         <aside className="space-y-6">
           <section className="card p-5">

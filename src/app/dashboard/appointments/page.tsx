@@ -4,7 +4,7 @@ import { Empty, PageHeader } from "@/components/ui";
 import { requireBusiness } from "@/lib/business";
 import { formatPhone } from "@/lib/booking/phone";
 import { fmtTime } from "@/lib/format";
-import { supabaseServer } from "@/lib/supabase/server";
+import { sql } from "@/lib/db";
 import type { Appointment } from "@/lib/types";
 import { cancelAppt } from "./actions";
 
@@ -14,23 +14,21 @@ export default async function Appointments({ searchParams }: PageProps<"/dashboa
   const { view } = (await searchParams) as Record<string, string | undefined>;
   const past = view === "past";
   const { business: b } = await requireBusiness();
-  const db = await supabaseServer();
-  const now = new Date().toISOString();
-
-  const [{ data }, staff, calls] = await Promise.all([
+  const [appts, staff] = await Promise.all([
     past
-      ? db.from("appointments").select("*").eq("business_id", b.id).lt("starts_at", now).order("starts_at", { ascending: false }).limit(200)
-      : db.from("appointments").select("*").eq("business_id", b.id).gte("starts_at", now).order("starts_at").limit(200),
-    db.from("staff").select("id, name").eq("business_id", b.id),
-    db.from("calls").select("id, retell_call_id").eq("business_id", b.id).eq("appointment_booked", true).limit(1000),
+      ? sql<Appointment & { call_id: string | null }>`
+          select a.*, c.id as call_id from appointments a left join calls c on c.retell_call_id = a.retell_call_id
+          where a.business_id = ${b.id} and a.starts_at < now() order by a.starts_at desc limit 200`
+      : sql<Appointment & { call_id: string | null }>`
+          select a.*, c.id as call_id from appointments a left join calls c on c.retell_call_id = a.retell_call_id
+          where a.business_id = ${b.id} and a.starts_at >= now() order by a.starts_at limit 200`,
+    sql<{ id: string; name: string }>`select id, name from staff where business_id = ${b.id}`,
   ]);
-  const appts = (data ?? []) as Appointment[];
-  const staffName = new Map((staff.data ?? []).map((s) => [s.id, s.name]));
-  const callFor = new Map((calls.data ?? []).map((c) => [c.retell_call_id, c.id]));
-  const multiStaff = (staff.data ?? []).length > 1;
+  const staffName = new Map(staff.map((s) => [s.id, s.name]));
+  const multiStaff = staff.length > 1;
 
   // Group by local day so the list reads like a diary.
-  const days = new Map<string, Appointment[]>();
+  const days = new Map<string, (Appointment & { call_id: string | null })[]>();
   for (const a of appts) {
     const key = DateTime.fromISO(a.starts_at).setZone(b.timezone).toISODate()!;
     days.set(key, [...(days.get(key) ?? []), a]);
@@ -60,7 +58,7 @@ export default async function Appointments({ searchParams }: PageProps<"/dashboa
               <h2 className="text-sm text-muted mb-2 px-1">{DateTime.fromISO(day).toFormat("cccc, LLLL d")}</h2>
               <ul className="card divide-y divide-black/5">
                 {list.map((a) => {
-                  const callId = a.retell_call_id ? callFor.get(a.retell_call_id) : undefined;
+                  const callId = a.call_id;
                   const cancelled = a.status === "cancelled";
                   return (
                     <li key={a.id} className={`p-4 sm:px-5 grid sm:grid-cols-[96px_1fr_auto] gap-x-5 gap-y-2 items-start ${cancelled ? "opacity-55" : ""}`}>

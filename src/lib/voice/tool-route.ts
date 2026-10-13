@@ -1,12 +1,10 @@
 import "server-only";
 import { NextResponse } from "next/server";
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { supabaseAdmin } from "../supabase/server";
 import { businessIdForAgent } from "../business";
 import { verifyRetellRequest, type RetellToolRequest } from "./retell";
 import type { ToolReply } from "../booking/booking-service";
 
-type Handler = (ctx: { db: SupabaseClient; businessId: string; callId: string; args: Record<string, unknown> }) => Promise<ToolReply>;
+type Handler = (ctx: { businessId: string; callId: string; args: Record<string, unknown> }) => Promise<ToolReply>;
 
 /**
  * Shared wrapper for agent tool endpoints: verify Retell's signature, resolve the business from the
@@ -26,14 +24,18 @@ export function toolRoute(name: string, handler: Handler) {
       return NextResponse.json({ error: "bad json" }, { status: 400 });
     }
 
-    const db = supabaseAdmin();
-    const businessId = body.call?.agent_id ? await businessIdForAgent(db, body.call.agent_id) : null;
+    let businessId: string | null = null;
+    try {
+      businessId = body.call?.agent_id ? await businessIdForAgent(body.call.agent_id) : null;
+    } catch (err) {
+      console.error(`tool ${name}: business lookup failed`, err);
+    }
     if (!businessId) {
       return NextResponse.json({ result: "This line isn't set up for booking yet. Take a message for the team." });
     }
 
     try {
-      const reply = await handler({ db, businessId, callId: body.call.call_id, args: body.args ?? {} });
+      const reply = await handler({ businessId, callId: body.call.call_id, args: body.args ?? {} });
       return NextResponse.json(reply);
     } catch (err) {
       console.error(`tool ${name} failed`, { businessId, callId: body.call.call_id }, err);

@@ -1,35 +1,48 @@
 import "server-only";
-import { z } from "zod";
 
-const schema = z.object({
-  NEXT_PUBLIC_APP_URL: z.string().url(),
-  NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
-  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
-  RETELL_API_KEY: z.string().min(1),
-  RETELL_LLM_MODEL: z.string().default("gpt-4.1-mini"),
-  GOOGLE_CLIENT_ID: z.string().min(1),
-  GOOGLE_CLIENT_SECRET: z.string().min(1),
-  RESEND_API_KEY: z.string().min(1),
-  EMAIL_FROM: z.string().min(3),
-  // 32 bytes, base64. Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-  ENCRYPTION_KEY: z.string().min(40),
-});
+// Core settings are required for the site to run at all. Integration keys are optional so the dashboard
+// can be deployed first; each integration asks for its keys when it is actually used.
 
-export type Env = z.infer<typeof schema>;
+type Key =
+  | "DATABASE_URL"
+  | "ENCRYPTION_KEY"
+  | "RETELL_API_KEY"
+  | "RETELL_LLM_MODEL"
+  | "GOOGLE_CLIENT_ID"
+  | "GOOGLE_CLIENT_SECRET"
+  | "RESEND_API_KEY"
+  | "EMAIL_FROM";
 
-let cached: Env | null = null;
+const FEATURE: Partial<Record<Key, string>> = {
+  RETELL_API_KEY: "The phone agent",
+  GOOGLE_CLIENT_ID: "Google Calendar",
+  GOOGLE_CLIENT_SECRET: "Google Calendar",
+  RESEND_API_KEY: "Email",
+  EMAIL_FROM: "Email",
+  ENCRYPTION_KEY: "Encryption",
+  DATABASE_URL: "The database",
+};
 
-/** Validated server env. Read lazily so `next build` works without secrets. */
-export function env(): Env {
-  if (cached) return cached;
-  const parsed = schema.safeParse(process.env);
-  if (!parsed.success) {
-    const missing = parsed.error.issues.map((i) => i.path.join(".")).join(", ");
-    throw new Error(`Missing or invalid environment variables: ${missing}. See .env.example.`);
-  }
-  cached = parsed.data;
-  return cached;
+/** Value of a required setting, with an error that says what to configure. */
+export function need(key: Key): string {
+  const v = process.env[key]?.trim();
+  if (!v) throw new Error(`${FEATURE[key] ?? key} isn't configured yet: set ${key} (see .env.example).`);
+  return v;
 }
 
-export const appUrl = () => env().NEXT_PUBLIC_APP_URL.replace(/\/$/, "");
+export function optional(key: Key): string | undefined {
+  return process.env[key]?.trim() || undefined;
+}
+
+export const isConfigured = (...keys: Key[]) => keys.every((k) => !!process.env[k]?.trim());
+
+/** Public base URL. Falls back to Vercel's production domain so deploys work without extra config. */
+export function appUrl(): string {
+  const explicit = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (explicit) return explicit.replace(/\/$/, "");
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  return "http://localhost:3000";
+}
+
+export const retellModel = () => optional("RETELL_LLM_MODEL") ?? "gpt-4.1-mini";

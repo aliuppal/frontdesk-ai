@@ -1,8 +1,8 @@
 import "server-only";
 import { google, type calendar_v3 } from "googleapis";
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { appUrl, env } from "../env";
+import { appUrl, need } from "../env";
 import { decrypt, encrypt } from "../crypto";
+import { one, sql } from "../db";
 import type { Busy } from "../booking/availability";
 
 const SCOPES = [
@@ -14,7 +14,7 @@ const SCOPES = [
 ];
 
 function oauthClient() {
-  return new google.auth.OAuth2(env().GOOGLE_CLIENT_ID, env().GOOGLE_CLIENT_SECRET, `${appUrl()}/api/google/callback`);
+  return new google.auth.OAuth2(need("GOOGLE_CLIENT_ID"), need("GOOGLE_CLIENT_SECRET"), `${appUrl()}/api/google/callback`);
 }
 
 export function googleAuthUrl(state: string): string {
@@ -22,29 +22,32 @@ export function googleAuthUrl(state: string): string {
 }
 
 /** Exchange the OAuth code and store the encrypted refresh token for the business. */
-export async function saveGoogleConnection(db: SupabaseClient, businessId: string, code: string): Promise<string> {
+export async function saveGoogleConnection(businessId: string, code: string): Promise<string> {
   const client = oauthClient();
   const { tokens } = await client.getToken(code);
   if (!tokens.refresh_token) throw new Error("Google did not return a refresh token. Remove the app's access in your Google account and try again.");
   client.setCredentials(tokens);
   const { data: me } = await google.oauth2({ version: "v2", auth: client }).userinfo.get();
   const email = me.email ?? "unknown";
-  const { error } = await db.from("calendar_connections").upsert({
-    business_id: businessId,
-    google_email: email,
-    refresh_token_enc: encrypt(tokens.refresh_token),
-    connected_at: new Date().toISOString(),
-  });
-  if (error) throw new Error(error.message);
+  await sql`insert into calendar_connections (business_id, google_email, refresh_token_enc, connected_at)
+            values (${businessId}, ${email}, ${encrypt(tokens.refresh_token)}, now())
+            on conflict (business_id) do update
+              set google_email = excluded.google_email, refresh_token_enc = excluded.refresh_token_enc, connected_at = now()`;
   return email;
 }
 
+export async function calendarConnection(businessId: string) {
+  return one<{ google_email: string; connected_at: string }>(
+    sql`select google_email, connected_at from calendar_connections where business_id = ${businessId}`,
+  );
+}
+
 /** Calendar API client for a business, or null if they haven't connected Google. */
-export async function calendarFor(db: SupabaseClient, businessId: string): Promise<calendar_v3.Calendar | null> {
-  const { data } = await db.from("calendar_connections").select("refresh_token_enc").eq("business_id", businessId).maybeSingle();
-  if (!data) return null;
+export async function calendarFor(businessId: string): Promise<calendar_v3.Calendar | null> {
+  const row = await one<{ refresh_token_enc: string }>(sql`select refresh_token_enc from calendar_connections where business_id = ${businessId}`);
+  if (!row) return null;
   const client = oauthClient();
-  client.setCredentials({ refresh_token: decrypt(data.refresh_token_enc) });
+  client.setCredentials({ refresh_token: decrypt(row.refresh_token_enc) });
   return google.calendar({ version: "v3", auth: client });
 }
 

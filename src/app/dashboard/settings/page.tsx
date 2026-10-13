@@ -3,9 +3,9 @@ import { Notice, PageHeader } from "@/components/ui";
 import { TestCallButton } from "@/components/TestCallButton";
 import { loadBusinessConfig, requireBusiness } from "@/lib/business";
 import { formatPhone } from "@/lib/booking/phone";
-import { calendarFor, listCalendars } from "@/lib/calendar/google";
+import { calendarConnection, calendarFor, listCalendars } from "@/lib/calendar/google";
+import { isConfigured } from "@/lib/env";
 import { US_TIMEZONES } from "@/lib/format";
-import { supabaseAdmin } from "@/lib/supabase/server";
 import { INDUSTRIES } from "@/lib/voice/prompt";
 import { activateAgent, deleteService, disconnectCalendar, removeStaff, saveHours, saveProfile, saveService, saveStaff } from "./actions";
 
@@ -26,16 +26,16 @@ function Section({ id, title, sub, children }: { id: string; title: string; sub?
 export default async function Settings({ searchParams }: PageProps<"/dashboard/settings">) {
   const sp = (await searchParams) as Record<string, string | undefined>;
   const { business } = await requireBusiness();
-  const admin = supabaseAdmin();
-  const config = await loadBusinessConfig(admin, business.id);
+  const [config, connection] = await Promise.all([loadBusinessConfig(business.id), calendarConnection(business.id)]);
   const b = config.business;
-  const { data: connection } = await admin.from("calendar_connections").select("google_email, connected_at").eq("business_id", b.id).maybeSingle();
+  const retellReady = isConfigured("RETELL_API_KEY");
+  const googleReady = isConfigured("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET");
 
   let calendars: { id: string; name: string }[] = [];
   let calendarProblem = false;
   if (connection) {
     try {
-      const cal = await calendarFor(admin, b.id);
+      const cal = await calendarFor(b.id);
       if (cal) calendars = await listCalendars(cal);
     } catch {
       calendarProblem = true;
@@ -94,11 +94,13 @@ export default async function Settings({ searchParams }: PageProps<"/dashboard/s
           ) : (
             <div className="flex flex-wrap items-center justify-between gap-4">
               <p className="text-sm text-muted max-w-lg">
-                Switching on buys a local {b.area_code ? `(${b.area_code}) ` : ""}number and sets up your agent from the settings below.
-                {!connection && " Connect Google Calendar first so it can see when you're busy."}
+                {retellReady
+                  ? `Switching on buys a local ${b.area_code ? `(${b.area_code}) ` : ""}number and sets up your agent from the settings below.`
+                  : "The phone service isn't connected on this server yet (RETELL_API_KEY is missing). Everything else can be set up now."}
+                {retellReady && !connection && " Connect Google Calendar first so it can see when you're busy."}
               </p>
               <form action={activateAgent}>
-                <button className="btn btn-primary" disabled={!activeServices.length || !config.hours.length}>
+                <button className="btn btn-primary" disabled={!retellReady || !activeServices.length || !config.hours.length}>
                   Switch on my phone agent
                 </button>
               </form>
@@ -121,8 +123,10 @@ export default async function Settings({ searchParams }: PageProps<"/dashboard/s
                 </form>
               </div>
             </div>
-          ) : (
+          ) : googleReady ? (
             <a href="/api/google/connect" className="btn btn-primary">Connect Google Calendar</a>
+          ) : (
+            <p className="text-sm text-muted">Google sign-in isn&apos;t configured on this server yet (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET).</p>
           )}
         </Section>
 

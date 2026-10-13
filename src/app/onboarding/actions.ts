@@ -2,7 +2,8 @@
 
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { supabaseAdmin, supabaseServer } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/business";
+import { db, one, sql } from "@/lib/db";
 import { INDUSTRIES } from "@/lib/voice/prompt";
 
 const ON_SITE = new Set(["plumbing", "hvac", "electrical", "cleaning", "landscaping"]);
@@ -32,45 +33,29 @@ function parseServices(text: string): { name: string; duration_minutes: number }
 }
 
 export async function createBusiness(form: FormData) {
-  const auth = await supabaseServer();
-  const {
-    data: { user },
-  } = await auth.auth.getUser();
-  if (!user) redirect("/login");
-
+  const user = await requireUser();
   const parsed = schema.safeParse(Object.fromEntries(form));
   if (!parsed.success) redirect(`/onboarding?error=${encodeURIComponent(parsed.error.issues[0].message)}`);
   const v = parsed.data;
 
-  const db = supabaseAdmin();
-  const { data: existing } = await db.from("business_members").select("business_id").eq("user_id", user.id).maybeSingle();
+  const existing = await one(sql`select 1 from business_members where user_id = ${user.id}`);
   if (existing) redirect("/dashboard");
 
-  const { data: business, error } = await db
-    .from("businesses")
-    .insert({
-      name: v.name,
-      industry: v.industry,
-      timezone: v.timezone,
-      notification_email: v.notification_email,
-      area_code: v.area_code ? Number(v.area_code) : null,
-      requires_address: ON_SITE.has(v.industry),
-    })
-    .select("id")
-    .single();
-  if (error || !business) redirect(`/onboarding?error=${encodeURIComponent(error?.message ?? "Could not create business")}`);
-
   const services = parseServices(v.services);
-  const results = await Promise.all([
-    db.from("business_members").insert({ business_id: business.id, user_id: user.id, role: "owner" }),
-    db.from("business_hours").insert([1, 2, 3, 4, 5].map((weekday) => ({ business_id: business.id, weekday, open_time: "09:00", close_time: "17:00" }))),
-    db.from("services").insert(services.map((s) => ({ ...s, business_id: business.id }))),
-    db.from("staff").insert({ business_id: business.id, name: v.name, calendar_id: "primary", is_default: true }),
+  const businessId = crypto.randomUUID();
+  const q = db();
+  // One transaction: the business and everything it starts with exist together or not at all.
+  await q.transaction([
+    q`insert into businesses (id, name, industry, timezone, notification_email, area_code, requires_address)
+      values (${businessId}, ${v.name}, ${v.industry}, ${v.timezone}, ${v.notification_email},
+              ${v.area_code ? Number(v.area_code) : null}, ${ON_SITE.has(v.industry)})`,
+    q`insert into business_members (business_id, user_id, role) values (${businessId}, ${user.id}, 'owner')`,
+    q`insert into business_hours (business_id, weekday, open_time, close_time)
+      select ${businessId}, d, '09:00', '17:00' from generate_series(1, 5) d`,
+    q`insert into services (business_id, name, duration_minutes)
+      select ${businessId}, s.name, s.duration_minutes
+      from jsonb_to_recordset(${JSON.stringify(services)}::jsonb) as s(name text, duration_minutes int)`,
+    q`insert into staff (business_id, name, calendar_id, is_default) values (${businessId}, ${v.name}, 'primary', true)`,
   ]);
-  const failed = results.find((r) => r.error);
-  if (failed) {
-    await db.from("businesses").delete().eq("id", business.id);
-    redirect(`/onboarding?error=${encodeURIComponent(failed.error!.message)}`);
-  }
   redirect("/dashboard/settings?welcome=1");
 }

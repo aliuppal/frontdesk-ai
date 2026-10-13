@@ -3,7 +3,7 @@ import { Empty, PageHeader } from "@/components/ui";
 import { requireBusiness } from "@/lib/business";
 import { formatPhone } from "@/lib/booking/phone";
 import { fmtDateTime } from "@/lib/format";
-import { supabaseServer } from "@/lib/supabase/server";
+import { sql } from "@/lib/db";
 import type { Customer } from "@/lib/types";
 
 export const metadata = { title: "Customers" };
@@ -11,29 +11,24 @@ export const metadata = { title: "Customers" };
 export default async function Customers({ searchParams }: PageProps<"/dashboard/customers">) {
   const { q = "" } = (await searchParams) as Record<string, string | undefined>;
   const { business: b } = await requireBusiness();
-  const db = await supabaseServer();
+  const term = q.trim();
+  const like = `%${term.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+  const digits = term.replace(/\D/g, "");
+  const phoneLike = digits.length >= 3 ? `%${digits}%` : null;
 
-  let query = db.from("customers").select("*").eq("business_id", b.id).order("updated_at", { ascending: false }).limit(300);
-  if (q.trim()) {
-    const safe = q.replace(/[%,()*]/g, " ").trim();
-    const digits = q.replace(/\D/g, "");
-    query = query.or([`name.ilike.%${safe}%`, `email.ilike.%${safe}%`, ...(digits.length >= 3 ? [`phone.ilike.%${digits}%`] : [])].join(","));
-  }
-  const [{ data }, calls, appts] = await Promise.all([
-    query,
-    db.from("calls").select("customer_id, started_at").eq("business_id", b.id).not("customer_id", "is", null),
-    db.from("appointments").select("customer_id").eq("business_id", b.id).eq("status", "booked").not("customer_id", "is", null),
-  ]);
-  const customers = (data ?? []) as Customer[];
-
-  const callCount = new Map<string, number>();
-  const lastCall = new Map<string, string>();
-  for (const c of calls.data ?? []) {
-    callCount.set(c.customer_id, (callCount.get(c.customer_id) ?? 0) + 1);
-    if (c.started_at && (!lastCall.has(c.customer_id) || c.started_at > lastCall.get(c.customer_id)!)) lastCall.set(c.customer_id, c.started_at);
-  }
-  const apptCount = new Map<string, number>();
-  for (const a of appts.data ?? []) apptCount.set(a.customer_id, (apptCount.get(a.customer_id) ?? 0) + 1);
+  const customers = await sql<Customer & { calls: number; bookings: number; last_call: string | null }>`
+    select c.*,
+      (select count(*) from calls k where k.customer_id = c.id) as calls,
+      (select count(*) from appointments a where a.customer_id = c.id and a.status = 'booked') as bookings,
+      (select max(k.started_at) from calls k where k.customer_id = c.id) as last_call
+    from customers c
+    where c.business_id = ${b.id}
+      and (${term} = '' or c.name ilike ${like} or c.email ilike ${like} or (${phoneLike}::text is not null and c.phone like ${phoneLike}))
+    order by c.updated_at desc
+    limit 300`;
+  const callCount = new Map(customers.map((c) => [c.id, c.calls]));
+  const apptCount = new Map(customers.map((c) => [c.id, c.bookings]));
+  const lastCall = new Map(customers.filter((c) => c.last_call).map((c) => [c.id, c.last_call!]));
 
   return (
     <>

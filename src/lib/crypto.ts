@@ -1,8 +1,8 @@
 import "server-only";
 import { createCipheriv, createDecipheriv, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { env } from "./env";
+import { need } from "./env";
 
-const key = () => Buffer.from(env().ENCRYPTION_KEY, "base64");
+const key = () => Buffer.from(need("ENCRYPTION_KEY"), "base64");
 
 /** AES-256-GCM. Output: base64(iv).base64(tag).base64(ciphertext) */
 export function encrypt(plain: string): string {

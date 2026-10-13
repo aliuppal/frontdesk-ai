@@ -3,7 +3,7 @@ import { CallOutcome, Empty, PageHeader } from "@/components/ui";
 import { requireBusiness } from "@/lib/business";
 import { formatPhone } from "@/lib/booking/phone";
 import { fmtDateTime, fmtDuration } from "@/lib/format";
-import { supabaseServer } from "@/lib/supabase/server";
+import { db } from "@/lib/db";
 import type { Call } from "@/lib/types";
 
 export const metadata = { title: "Calls" };
@@ -22,26 +22,32 @@ export default async function Calls({ searchParams }: PageProps<"/dashboard/call
   const filter = sp.filter ?? "all";
   const page = Math.max(1, Number(sp.page ?? 1) || 1);
   const { business: b } = await requireBusiness();
-  const db = await supabaseServer();
-
-  let query = db
-    .from("calls")
-    .select("*", { count: "exact" })
-    .eq("business_id", b.id)
-    .order("started_at", { ascending: false, nullsFirst: false })
-    .range((page - 1) * PAGE, page * PAGE - 1);
-  if (filter === "booked") query = query.eq("appointment_booked", true);
-  if (filter === "none") query = query.eq("appointment_booked", false);
-  if (filter === "callback") query = query.eq("appointment_booked", false).eq("extracted->>follow_up_needed", "true");
+  // Build the WHERE clause from fixed fragments; every user value goes in as a numbered parameter.
+  const params: unknown[] = [b.id];
+  const where = ["business_id = $1"];
+  if (filter === "booked") where.push("appointment_booked");
+  if (filter === "none") where.push("not appointment_booked");
+  if (filter === "callback") where.push("not appointment_booked and extracted->>'follow_up_needed' = 'true'");
   if (q) {
+    const like = `%${q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+    params.push(like);
+    const n = params.length;
+    const ors = [`summary ilike $${n}`, `transcript ilike $${n}`, `extracted->>'caller_name' ilike $${n}`];
     const digits = q.replace(/\D/g, "");
-    const safe = q.replace(/[%,()*]/g, " ");
-    const ors = [`summary.ilike.%${safe}%`, `transcript.ilike.%${safe}%`, `extracted->>caller_name.ilike.%${safe}%`];
-    if (digits.length >= 3) ors.push(`from_number.ilike.%${digits}%`);
-    query = query.or(ors.join(","));
+    if (digits.length >= 3) {
+      params.push(`%${digits}%`);
+      ors.push(`from_number like $${params.length}`);
+    }
+    where.push(`(${ors.join(" or ")})`);
   }
-  const { data, count } = await query;
-  const calls = (data ?? []) as Call[];
+  params.push(PAGE, (page - 1) * PAGE);
+  const rows = (await db().query(
+    `select *, count(*) over () as total from calls where ${where.join(" and ")}
+     order by started_at desc nulls last limit $${params.length - 1} offset $${params.length}`,
+    params,
+  )) as (Call & { total: number })[];
+  const calls: Call[] = rows;
+  const count = rows[0]?.total ?? 0;
   const pages = Math.max(1, Math.ceil((count ?? 0) / PAGE));
 
   const href = (next: { filter?: string; page?: number }) => {

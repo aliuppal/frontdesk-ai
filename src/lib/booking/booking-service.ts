@@ -1,9 +1,9 @@
 import "server-only";
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { DateTime } from "luxon";
 import { z } from "zod";
 import { loadBusinessConfig } from "../business";
 import { calendarFor, createEvent, deleteEvent, freeBusy } from "../calendar/google";
+import { one, pgCode, sql } from "../db";
 import type { Appointment, Business, BusinessConfig, Service, Staff } from "../types";
 import { findSlots, slotsForDate, spokenLabel, spread, type Busy, type BookingRules, type StaffBusy, type TimeOfDay } from "./availability";
 import { normalizePhone } from "./phone";
@@ -45,24 +45,20 @@ function rulesFor(b: Business, service: Service): BookingRules {
 }
 
 /** Busy blocks per staff member: Google Calendar (if connected) plus appointments already in our DB. */
-async function staffBusy(db: SupabaseClient, b: Business, staff: Staff[], from: Date, to: Date): Promise<StaffBusy[]> {
-  const { data: appts, error } = await db
-    .from("appointments")
-    .select("staff_id, starts_at, ends_at")
-    .eq("business_id", b.id)
-    .eq("status", "booked")
-    .in("staff_id", staff.map((s) => s.id))
-    .lt("starts_at", to.toISOString())
-    .gt("ends_at", from.toISOString());
-  if (error) throw new Error(error.message);
+async function staffBusy(b: Business, staff: Staff[], from: Date, to: Date): Promise<StaffBusy[]> {
+  const ids = staff.map((s) => s.id);
+  const appts = await sql<{ staff_id: string; starts_at: string; ends_at: string }>`
+    select staff_id, starts_at, ends_at from appointments
+    where business_id = ${b.id} and status = 'booked' and staff_id = any(${ids}::uuid[])
+      and starts_at < ${to.toISOString()} and ends_at > ${from.toISOString()}`;
 
-  const cal = await calendarFor(db, b.id);
+  const cal = await calendarFor(b.id);
   const google = cal ? await freeBusy(cal, staff.map((s) => s.calendar_id), from, to) : {};
 
   return staff.map((s) => {
     const busy: Busy[] = [
       ...(google[s.calendar_id] ?? []),
-      ...(appts ?? []).filter((a) => a.staff_id === s.id).map((a) => ({ start: new Date(a.starts_at), end: new Date(a.ends_at) })),
+      ...appts.filter((a) => a.staff_id === s.id).map((a) => ({ start: new Date(a.starts_at), end: new Date(a.ends_at) })),
     ];
     return { staffId: s.id, busy };
   });
@@ -75,12 +71,12 @@ const checkArgs = z.object({
   staff_name: z.string().optional(),
 });
 
-export async function checkAvailability(db: SupabaseClient, businessId: string, rawArgs: unknown, now = new Date()): Promise<ToolReply> {
+export async function checkAvailability(businessId: string, rawArgs: unknown, now = new Date()): Promise<ToolReply> {
   const parsed = checkArgs.safeParse(rawArgs);
   if (!parsed.success) return { result: "I need the service and the date as YYYY-MM-DD to check the schedule." };
   const args = parsed.data;
 
-  const config = await loadBusinessConfig(db, businessId);
+  const config = await loadBusinessConfig(businessId);
   const b = config.business;
   const service = matchService(config.services, args.service);
   if (!service) {
@@ -100,7 +96,7 @@ export async function checkAvailability(db: SupabaseClient, businessId: string, 
 
   let busy: StaffBusy[];
   try {
-    busy = await staffBusy(db, b, staff, from.toJSDate(), to.toJSDate());
+    busy = await staffBusy(b, staff, from.toJSDate(), to.toJSDate());
   } catch (err) {
     console.error("availability: calendar lookup failed", businessId, err);
     return { result: CALENDAR_DOWN, error: "calendar_unavailable" };
@@ -148,20 +144,17 @@ export interface BookingOutcome {
   created?: boolean;
 }
 
-export async function bookAppointment(
-  db: SupabaseClient,
-  businessId: string,
-  callId: string | null,
-  rawArgs: unknown,
-  now = new Date(),
-): Promise<BookingOutcome> {
+const existingBooking = (callId: string, startIso: string) =>
+  one<Appointment>(sql`select * from appointments where retell_call_id = ${callId} and starts_at = ${startIso} and status = 'booked'`);
+
+export async function bookAppointment(businessId: string, callId: string | null, rawArgs: unknown, now = new Date()): Promise<BookingOutcome> {
   const parsed = bookArgs.safeParse(rawArgs);
   if (!parsed.success) {
     const fields = parsed.error.issues.map((i) => i.path.join(".")).join(", ");
     return { reply: { result: `Booking details are incomplete or invalid (${fields}). Ask the caller again, then retry.` } };
   }
   const args = parsed.data;
-  const config = await loadBusinessConfig(db, businessId);
+  const config = await loadBusinessConfig(businessId);
   const b = config.business;
   const tz = b.timezone;
 
@@ -170,20 +163,17 @@ export async function bookAppointment(
 
   const start = DateTime.fromISO(args.start_time, { setZone: true });
   if (!start.isValid) return { reply: { result: "That start time wasn't understood. Check availability again and use a start_time from the results." } };
-  const startUtc = start.toUTC();
+  const startIso = start.toUTC().toISO()!;
+  const already = (a: Appointment): BookingOutcome => ({
+    reply: { result: `Already booked for ${spokenLabel(new Date(a.starts_at), tz)}.`, appointment_id: a.id },
+    appointment: a,
+    business: b,
+  });
 
   // Retell retries or the model calling twice must not create two bookings.
   if (callId) {
-    const { data: existing } = await db
-      .from("appointments")
-      .select("*")
-      .eq("retell_call_id", callId)
-      .eq("starts_at", startUtc.toISO())
-      .eq("status", "booked")
-      .maybeSingle();
-    if (existing) {
-      return { reply: { result: `Already booked for ${spokenLabel(new Date(existing.starts_at), tz)}.`, appointment_id: existing.id }, appointment: existing, business: b };
-    }
+    const existing = await existingBooking(callId, startIso);
+    if (existing) return already(existing);
   }
 
   const staff = eligibleStaff(config, service, args.staff_name);
@@ -194,13 +184,13 @@ export async function bookAppointment(
   let busy: StaffBusy[];
   try {
     const dayStart = DateTime.fromISO(localDate, { zone: tz }).startOf("day");
-    busy = await staffBusy(db, b, staff, dayStart.toJSDate(), dayStart.plus({ days: 1 }).toJSDate());
+    busy = await staffBusy(b, staff, dayStart.toJSDate(), dayStart.plus({ days: 1 }).toJSDate());
   } catch (err) {
     console.error("booking: calendar lookup failed", businessId, err);
     return { reply: { result: CALENDAR_DOWN, error: "calendar_unavailable" } };
   }
 
-  const slot = slotsForDate(localDate, hours, rulesFor(b, service), busy, now).find((s) => s.start.getTime() === startUtc.toMillis());
+  const slot = slotsForDate(localDate, hours, rulesFor(b, service), busy, now).find((s) => s.start.getTime() === start.toMillis());
   if (!slot) {
     return { reply: { result: "Sorry, that time is no longer available. Check availability again and offer the caller other times.", error: "slot_taken" } };
   }
@@ -208,75 +198,71 @@ export async function bookAppointment(
 
   const phone = normalizePhone(args.customer_phone);
   const email = args.customer_email ? args.customer_email.trim().toLowerCase() : null;
+  const name = args.customer_name.trim();
+  const address = args.address?.trim() || null;
+  const notes = args.notes?.trim() || null;
 
-  const { data: customer, error: custErr } = await db
-    .from("customers")
-    .upsert(
-      {
-        business_id: b.id,
-        phone,
-        name: args.customer_name.trim(),
-        ...(email ? { email } : {}),
-        ...(args.address ? { address: args.address.trim() } : {}),
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "business_id,phone" },
-    )
-    .select("id")
-    .single();
-  if (custErr) console.error("booking: customer upsert failed", custErr);
+  let customerId: string | null = null;
+  try {
+    const row = await one<{ id: string }>(sql`
+      insert into customers (business_id, phone, name, email, address)
+      values (${b.id}, ${phone}, ${name}, ${email}, ${address})
+      on conflict (business_id, phone) do update set
+        name = excluded.name,
+        email = coalesce(excluded.email, customers.email),
+        address = coalesce(excluded.address, customers.address),
+        updated_at = now()
+      returning id`);
+    customerId = row?.id ?? null;
+  } catch (err) {
+    console.error("booking: customer upsert failed", err);
+  }
 
-  const { data: appt, error: insErr } = await db
-    .from("appointments")
-    .insert({
-      business_id: b.id,
-      customer_id: customer?.id ?? null,
-      service_id: service.id,
-      staff_id: chosen.id,
-      retell_call_id: callId,
-      service_name: service.name,
-      starts_at: slot.start.toISOString(),
-      ends_at: slot.end.toISOString(),
-      customer_name: args.customer_name.trim(),
-      customer_phone: phone,
-      customer_email: email,
-      address: args.address?.trim() || null,
-      notes: args.notes?.trim() || null,
-    })
-    .select("*")
-    .single();
-
-  if (insErr || !appt) {
+  let appt: Appointment | null;
+  try {
+    appt = await one<Appointment>(sql`
+      insert into appointments (business_id, customer_id, service_id, staff_id, retell_call_id, service_name, starts_at, ends_at,
+                                customer_name, customer_phone, customer_email, address, notes)
+      values (${b.id}, ${customerId}, ${service.id}, ${chosen.id}, ${callId}, ${service.name}, ${slot.start.toISOString()},
+              ${slot.end.toISOString()}, ${name}, ${phone}, ${email}, ${address}, ${notes})
+      returning *`);
+  } catch (err) {
     // 23P01 = exclusion violation: another caller took this slot a moment ago.
-    if (insErr?.code === "23P01") return { reply: { result: "Sorry, someone just booked that time. Check availability again and offer other times.", error: "slot_taken" } };
-    console.error("booking: insert failed", insErr);
+    if (pgCode(err) === "23P01") return { reply: { result: "Sorry, someone just booked that time. Check availability again and offer other times.", error: "slot_taken" } };
+    // 23505 = the same call booked the same start concurrently (a retry raced the first request).
+    if (pgCode(err) === "23505" && callId) {
+      const existing = await existingBooking(callId, startIso);
+      if (existing) return already(existing);
+    }
+    console.error("booking: insert failed", err);
     return { reply: { result: CALENDAR_DOWN, error: "booking_failed" } };
   }
+  if (!appt) return { reply: { result: CALENDAR_DOWN, error: "booking_failed" } };
 
   // Calendar event is best-effort: the booking stands even if Google is down, and the dashboard flags it.
   try {
-    const cal = await calendarFor(db, b.id);
+    const cal = await calendarFor(b.id);
     if (cal) {
       const eventId = await createEvent(cal, chosen.calendar_id, {
-        summary: `${service.name} — ${appt.customer_name}`,
-        description: [`Phone: ${phone}`, email && `Email: ${email}`, appt.address && `Address: ${appt.address}`, appt.notes && `Notes: ${appt.notes}`, "Booked by FrontDesk AI phone agent."]
+        summary: `${service.name} — ${name}`,
+        description: [`Phone: ${phone}`, email && `Email: ${email}`, address && `Address: ${address}`, notes && `Notes: ${notes}`, "Booked by FrontDesk AI phone agent."]
           .filter(Boolean)
           .join("\n"),
         start: slot.start,
         end: slot.end,
         timezone: tz,
-        location: appt.address,
+        location: address,
       });
-      await db.from("appointments").update({ google_event_id: eventId }).eq("id", appt.id);
+      await sql`update appointments set google_event_id = ${eventId} where id = ${appt.id}`;
       appt.google_event_id = eventId;
     }
   } catch (err) {
     console.error("booking: google event failed", err);
-    await db.from("appointments").update({ calendar_sync_error: (err as Error).message.slice(0, 500) }).eq("id", appt.id);
+    await sql`update appointments set calendar_sync_error = ${(err as Error).message.slice(0, 500)} where id = ${appt.id}`;
   }
 
   if (callId) {
-    await db.from("calls").update({ appointment_booked: true, customer_id: customer?.id ?? null }).eq("retell_call_id", callId);
+    await sql`update calls set appointment_booked = true, customer_id = coalesce(${customerId}, customer_id) where retell_call_id = ${callId}`;
   }
 
   return {
@@ -291,15 +277,21 @@ export async function bookAppointment(
 }
 
 /** Owner cancels from the dashboard: mark cancelled, remove the Google event. */
-export async function cancelAppointment(db: SupabaseClient, businessId: string, appointmentId: string): Promise<{ appointment: Appointment; business: Business }> {
-  const { data: appt } = await db.from("appointments").select("*").eq("id", appointmentId).eq("business_id", businessId).single();
-  if (!appt) throw new Error("Appointment not found");
-  const { data: business } = await db.from("businesses").select("*").eq("id", businessId).single();
-  await db.from("appointments").update({ status: "cancelled" }).eq("id", appointmentId);
+export async function cancelAppointment(businessId: string, appointmentId: string): Promise<{ appointment: Appointment; business: Business }> {
+  const appt = await one<Appointment>(sql`
+    update appointments set status = 'cancelled'
+    where id = ${appointmentId} and business_id = ${businessId} and status = 'booked'
+    returning *`);
+  if (!appt) throw new Error("Appointment not found or already cancelled");
+  const business = (await one<Business>(sql`select * from businesses where id = ${businessId}`))!;
   if (appt.google_event_id) {
-    const { data: staff } = await db.from("staff").select("calendar_id").eq("id", appt.staff_id).single();
-    const cal = await calendarFor(db, businessId);
-    if (cal && staff) await deleteEvent(cal, staff.calendar_id, appt.google_event_id);
+    try {
+      const staff = await one<{ calendar_id: string }>(sql`select calendar_id from staff where id = ${appt.staff_id}`);
+      const cal = await calendarFor(businessId);
+      if (cal && staff) await deleteEvent(cal, staff.calendar_id, appt.google_event_id);
+    } catch (err) {
+      console.error("cancel: google delete failed", err);
+    }
   }
-  return { appointment: { ...appt, status: "cancelled" }, business: business! };
+  return { appointment: appt, business };
 }

@@ -2,7 +2,6 @@ import { NextResponse, type NextRequest } from "next/server";
 import { requireBusiness } from "@/lib/business";
 import { verifyState } from "@/lib/crypto";
 import { saveGoogleConnection } from "@/lib/calendar/google";
-import { supabaseAdmin } from "@/lib/supabase/server";
 
 export async function GET(req: NextRequest) {
   const settings = new URL("/dashboard/settings", req.url);
@@ -16,7 +15,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(settings);
   }
   try {
-    await saveGoogleConnection(supabaseAdmin(), business.id, code);
+    await saveGoogleConnection(business.id, code);
     settings.searchParams.set("calendar", "connected");
   } catch (err) {
     console.error("google connect failed", err);

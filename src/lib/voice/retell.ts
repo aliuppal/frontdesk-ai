@@ -1,7 +1,7 @@
 import "server-only";
 import Retell, { verify } from "retell-sdk";
-import { appUrl, env } from "../env";
-import { supabaseAdmin } from "../supabase/server";
+import { appUrl, need, optional, retellModel } from "../env";
+import { sql } from "../db";
 import { loadBusinessConfig } from "../business";
 import { buildAgentDefinition } from "./prompt";
 
@@ -9,14 +9,15 @@ import { buildAgentDefinition } from "./prompt";
 // the webhook route and the tool request parser.
 
 export function retell() {
-  return new Retell({ apiKey: env().RETELL_API_KEY });
+  return new Retell({ apiKey: need("RETELL_API_KEY") });
 }
 
 /** Verify `x-retell-signature` against the exact raw body. */
 export async function verifyRetellRequest(rawBody: string, signature: string | null): Promise<boolean> {
-  if (!signature) return false;
+  const key = optional("RETELL_API_KEY");
+  if (!signature || !key) return false;
   try {
-    return await verify(rawBody, env().RETELL_API_KEY, signature);
+    return await verify(rawBody, key, signature);
   } catch {
     return false;
   }
@@ -34,15 +35,14 @@ export interface RetellToolRequest {
  * first time. Safe to call repeatedly: it is how settings changes reach the live agent.
  */
 export async function syncAgent(businessId: string): Promise<{ phoneNumber: string | null }> {
-  const db = supabaseAdmin();
-  const config = await loadBusinessConfig(db, businessId);
+  const config = await loadBusinessConfig(businessId);
   const b = config.business;
   const def = buildAgentDefinition(config, appUrl());
   const client = retell();
 
   // The SDK's params are strict unions; our definition is plain JSON built by prompt.ts.
   const llmBody = {
-    model: env().RETELL_LLM_MODEL,
+    model: retellModel(),
     model_temperature: 0.2,
     start_speaker: "agent",
     general_prompt: def.generalPrompt,
@@ -88,12 +88,8 @@ export async function syncAgent(businessId: string): Promise<{ phoneNumber: stri
     phoneNumber = created.phone_number;
   }
 
-  const { error } = await db
-    .from("businesses")
-    .update({ retell_llm_id: llmId, retell_agent_id: agentId, phone_number: phoneNumber, agent_synced_at: new Date().toISOString() })
-    .eq("id", businessId);
-  if (error) throw new Error(`Saving agent ids failed: ${error.message}`);
-
+  await sql`update businesses set retell_llm_id = ${llmId}, retell_agent_id = ${agentId}, phone_number = ${phoneNumber},
+              agent_synced_at = now() where id = ${businessId}`;
   return { phoneNumber };
 }
 

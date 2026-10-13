@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 import { Notice } from "@/components/ui";
 import { US_TIMEZONES } from "@/lib/format";
-import { supabaseServer } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/business";
+import { one, sql } from "@/lib/db";
 import { INDUSTRIES } from "@/lib/voice/prompt";
 import { createBusiness } from "./actions";
 
@@ -23,13 +24,8 @@ const LABELS: Record<string, string> = {
 
 export default async function Onboarding({ searchParams }: PageProps<"/onboarding">) {
   const { error } = (await searchParams) as Record<string, string | undefined>;
-  const db = await supabaseServer();
-  const {
-    data: { user },
-  } = await db.auth.getUser();
-  if (!user) redirect("/login");
-  const { data: member } = await db.from("business_members").select("business_id").eq("user_id", user.id).maybeSingle();
-  if (member) redirect("/dashboard");
+  const user = await requireUser();
+  if (await one(sql`select 1 from business_members where user_id = ${user.id}`)) redirect("/dashboard");
 
   return (
     <main className="flex-1 bg-surface-2 px-4 py-14">

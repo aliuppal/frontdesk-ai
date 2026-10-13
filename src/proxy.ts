@@ -1,35 +1,20 @@
-import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-// Keeps the Supabase session cookie fresh and sends signed-out visitors to /login.
-export async function proxy(request: NextRequest) {
-  let response = NextResponse.next({ request });
-  const supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
-    cookies: {
-      getAll: () => request.cookies.getAll(),
-      setAll: (list) => {
-        list.forEach(({ name, value }) => request.cookies.set(name, value));
-        response = NextResponse.next({ request });
-        list.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
-      },
-    },
-  });
+// Fast gate: send visitors without a session cookie to /login. The session itself is validated
+// against the database in requireUser()/requireBusiness() on every dashboard request.
+const SESSION_COOKIE = "fd_session";
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  const path = request.nextUrl.pathname;
-  if (!user && (path.startsWith("/dashboard") || path.startsWith("/onboarding"))) {
+export function proxy(request: NextRequest) {
+  if (!request.cookies.get(SESSION_COOKIE)) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
-    url.searchParams.set("next", path);
+    url.search = "";
+    url.searchParams.set("next", request.nextUrl.pathname);
     return NextResponse.redirect(url);
   }
-  return response;
+  return NextResponse.next();
 }
 
 export const config = {
-  // Skip static assets and the machine-to-machine endpoints Retell calls (they carry no cookies).
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/tools|api/retell|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)"],
+  matcher: ["/dashboard/:path*", "/onboarding"],
 };

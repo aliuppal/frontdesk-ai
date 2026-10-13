@@ -5,12 +5,12 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireBusiness } from "@/lib/business";
 import { normalizePhone } from "@/lib/booking/phone";
-import { supabaseAdmin } from "@/lib/supabase/server";
+import { db, one, sql } from "@/lib/db";
 import { syncAgent } from "@/lib/voice/retell";
 import { INDUSTRIES } from "@/lib/voice/prompt";
 
-// Each action: resolve the owner's business from their session, write with the service role scoped to
-// that business id, then push the new settings to the live agent (if it's switched on).
+// Each action: resolve the owner's business from their session, write rows scoped to that business id,
+// then push the new settings to the live agent (if it's switched on).
 
 type Section = "agent" | "calendar" | "profile" | "hours" | "services" | "staff";
 
@@ -22,7 +22,7 @@ async function finish(section: Section, opts: { sync?: boolean; error?: string }
       await syncAgent(business.id);
     } catch (err) {
       console.error("agent sync failed", err);
-      syncError = "Saved, but the phone agent couldn't be updated. Try “Update agent” in a minute.";
+      syncError = "Saved, but the phone agent couldn't be updated. Try “Update agent now” in a minute.";
     }
   }
   revalidatePath("/dashboard", "layout");
@@ -39,6 +39,7 @@ const int = (v: FormDataEntryValue | null, min: number, max: number, fallback: n
   const n = Number(v);
   return v !== null && v !== "" && Number.isFinite(n) ? Math.min(max, Math.max(min, Math.round(n))) : fallback;
 };
+const errorText = (err: unknown) => (err as Error)?.message ?? "Something went wrong";
 
 const profile = z.object({
   name: z.string().trim().min(2),
@@ -51,31 +52,34 @@ export async function saveProfile(form: FormData) {
   const { business } = await requireBusiness();
   const parsed = profile.safeParse(Object.fromEntries(form));
   if (!parsed.success) return finish("profile", { error: "Check the business name, type and alert email." });
+  const v = parsed.data;
   const phone = text(form.get("business_phone"));
   const transfer = text(form.get("transfer_number"));
-  const { error } = await supabaseAdmin()
-    .from("businesses")
-    .update({
-      ...parsed.data,
-      business_phone: phone ? normalizePhone(phone) : null,
-      address: text(form.get("address")),
-      greeting: text(form.get("greeting")),
-      agent_instructions: text(form.get("agent_instructions")),
-      transfer_number: transfer ? normalizePhone(transfer) : null,
-      requires_address: form.get("requires_address") === "on",
-      voice_id: text(form.get("voice_id")) ?? "retell-Cimo",
-      buffer_minutes: int(form.get("buffer_minutes"), 0, 240, 0),
-      min_notice_minutes: int(form.get("min_notice_minutes"), 0, 10080, 60),
-      max_days_ahead: int(form.get("max_days_ahead"), 1, 365, 30),
-      slot_interval_minutes: [10, 15, 20, 30, 60].includes(Number(form.get("slot_interval_minutes"))) ? Number(form.get("slot_interval_minutes")) : 30,
-    })
-    .eq("id", business.id);
-  return finish("profile", { error: error?.message });
+  const interval = Number(form.get("slot_interval_minutes"));
+  try {
+    await sql`update businesses set
+      name = ${v.name}, industry = ${v.industry}, timezone = ${v.timezone}, notification_email = ${v.notification_email},
+      business_phone = ${phone ? normalizePhone(phone) : null},
+      address = ${text(form.get("address"))},
+      greeting = ${text(form.get("greeting"))},
+      agent_instructions = ${text(form.get("agent_instructions"))},
+      transfer_number = ${transfer ? normalizePhone(transfer) : null},
+      requires_address = ${form.get("requires_address") === "on"},
+      voice_id = ${text(form.get("voice_id")) ?? "retell-Cimo"},
+      buffer_minutes = ${int(form.get("buffer_minutes"), 0, 240, 0)},
+      min_notice_minutes = ${int(form.get("min_notice_minutes"), 0, 10080, 60)},
+      max_days_ahead = ${int(form.get("max_days_ahead"), 1, 365, 30)},
+      slot_interval_minutes = ${[10, 15, 20, 30, 60].includes(interval) ? interval : 30}
+      where id = ${business.id}`;
+  } catch (err) {
+    return finish("profile", { error: errorText(err) });
+  }
+  return finish("profile");
 }
 
 export async function saveHours(form: FormData) {
   const { business } = await requireBusiness();
-  const rows: { business_id: string; weekday: number; open_time: string; close_time: string }[] = [];
+  const rows: { weekday: number; open_time: string; close_time: string }[] = [];
   for (let d = 1; d <= 7; d++) {
     if (form.get(`open_${d}_on`) !== "on") continue;
     const open = String(form.get(`open_${d}`) ?? "");
@@ -83,12 +87,20 @@ export async function saveHours(form: FormData) {
     if (!/^\d{2}:\d{2}$/.test(open) || !/^\d{2}:\d{2}$/.test(close) || close <= open) {
       return finish("hours", { error: "Each open day needs a closing time after its opening time." });
     }
-    rows.push({ business_id: business.id, weekday: d, open_time: open, close_time: close });
+    rows.push({ weekday: d, open_time: open, close_time: close });
   }
-  const db = supabaseAdmin();
-  const del = await db.from("business_hours").delete().eq("business_id", business.id);
-  const ins = rows.length ? await db.from("business_hours").insert(rows) : { error: null };
-  return finish("hours", { error: del.error?.message ?? ins.error?.message });
+  const q = db();
+  try {
+    await q.transaction([
+      q`delete from business_hours where business_id = ${business.id}`,
+      q`insert into business_hours (business_id, weekday, open_time, close_time)
+        select ${business.id}, r.weekday, r.open_time::time, r.close_time::time
+        from jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) as r(weekday int, open_time text, close_time text)`,
+    ]);
+  } catch (err) {
+    return finish("hours", { error: errorText(err) });
+  }
+  return finish("hours");
 }
 
 export async function saveService(form: FormData) {
@@ -96,67 +108,74 @@ export async function saveService(form: FormData) {
   const id = text(form.get("id"));
   const name = text(form.get("name"));
   if (!name) return finish("services", { error: "Give the service a name." });
-  const row = {
-    business_id: business.id,
-    name,
-    duration_minutes: int(form.get("duration_minutes"), 5, 600, 60),
-    price_note: text(form.get("price_note")),
-    description: text(form.get("description")),
-    active: id ? form.get("active") === "on" : true,
-  };
-  const db = supabaseAdmin();
-  const { error } = id ? await db.from("services").update(row).eq("id", id).eq("business_id", business.id) : await db.from("services").insert(row);
-  return finish("services", { error: error?.message });
+  const minutes = int(form.get("duration_minutes"), 5, 600, 60);
+  const price = text(form.get("price_note"));
+  const description = text(form.get("description"));
+  try {
+    if (id) {
+      await sql`update services set name = ${name}, duration_minutes = ${minutes}, price_note = ${price},
+                description = ${description}, active = ${form.get("active") === "on"}
+                where id = ${id} and business_id = ${business.id}`;
+    } else {
+      await sql`insert into services (business_id, name, duration_minutes, price_note, description)
+                values (${business.id}, ${name}, ${minutes}, ${price}, ${description})`;
+    }
+  } catch (err) {
+    return finish("services", { error: errorText(err) });
+  }
+  return finish("services");
 }
 
 export async function deleteService(form: FormData) {
   const { business } = await requireBusiness();
-  const { error } = await supabaseAdmin().from("services").delete().eq("id", String(form.get("id"))).eq("business_id", business.id);
-  return finish("services", { error: error?.message });
+  await sql`delete from services where id = ${String(form.get("id"))} and business_id = ${business.id}`;
+  return finish("services");
 }
 
 export async function saveStaff(form: FormData) {
   const { business } = await requireBusiness();
-  const db = supabaseAdmin();
   const id = text(form.get("id"));
   const name = text(form.get("name"));
   if (!name) return finish("staff", { error: "Give the team member a name." });
-  const row = {
-    business_id: business.id,
-    name,
-    email: text(form.get("email")),
-    calendar_id: text(form.get("calendar_id")) ?? "primary",
-    active: id ? form.get("active") === "on" : true,
-  };
-  const res = id
-    ? await db.from("staff").update(row).eq("id", id).eq("business_id", business.id).select("id").single()
-    : await db.from("staff").insert(row).select("id").single();
-  if (res.error || !res.data) return finish("staff", { error: res.error?.message ?? "Couldn't save" });
-
+  const email = text(form.get("email"));
+  const calendarId = text(form.get("calendar_id")) ?? "primary";
   // Services this person does. None ticked = they can do every service.
-  const { data: owned } = await db.from("services").select("id").eq("business_id", business.id);
-  const allowed = new Set((owned ?? []).map((s) => s.id));
-  const picked = form.getAll("service_ids").map(String).filter((s) => allowed.has(s));
-  await db.from("staff_services").delete().eq("staff_id", res.data.id);
-  if (picked.length) await db.from("staff_services").insert(picked.map((service_id) => ({ staff_id: res.data.id, service_id })));
+  const picked = form.getAll("service_ids").map(String);
+
+  try {
+    const row = id
+      ? await one<{ id: string }>(sql`update staff set name = ${name}, email = ${email}, calendar_id = ${calendarId},
+                active = ${form.get("active") === "on"} where id = ${id} and business_id = ${business.id} returning id`)
+      : await one<{ id: string }>(sql`insert into staff (business_id, name, email, calendar_id)
+                values (${business.id}, ${name}, ${email}, ${calendarId}) returning id`);
+    if (!row) return finish("staff", { error: "Team member not found." });
+    const q = db();
+    await q.transaction([
+      q`delete from staff_services where staff_id = ${row.id}`,
+      // Only services that belong to this business can be linked.
+      q`insert into staff_services (staff_id, service_id)
+        select ${row.id}, s.id from services s where s.business_id = ${business.id} and s.id::text = any(${picked}::text[])`,
+    ]);
+  } catch (err) {
+    return finish("staff", { error: errorText(err) });
+  }
   return finish("staff");
 }
 
 export async function removeStaff(form: FormData) {
   const { business } = await requireBusiness();
-  const db = supabaseAdmin();
   const id = String(form.get("id"));
-  const { data: s } = await db.from("staff").select("is_default").eq("id", id).eq("business_id", business.id).single();
+  const s = await one<{ is_default: boolean }>(sql`select is_default from staff where id = ${id} and business_id = ${business.id}`);
   if (!s) return finish("staff", { error: "Not found" });
   if (s.is_default) return finish("staff", { error: "The main calendar can't be removed. Rename it instead." });
   // Keep the row (past appointments point at it); just stop offering their time.
-  const { error } = await db.from("staff").update({ active: false }).eq("id", id).eq("business_id", business.id);
-  return finish("staff", { error: error?.message });
+  await sql`update staff set active = false where id = ${id} and business_id = ${business.id}`;
+  return finish("staff");
 }
 
 export async function disconnectCalendar() {
   const { business } = await requireBusiness();
-  await supabaseAdmin().from("calendar_connections").delete().eq("business_id", business.id);
+  await sql`delete from calendar_connections where business_id = ${business.id}`;
   return finish("calendar", { sync: false });
 }
 
@@ -167,7 +186,7 @@ export async function activateAgent() {
     await syncAgent(business.id);
   } catch (err) {
     console.error("activate agent failed", err);
-    failure = `Couldn't switch the agent on: ${(err as Error).message}`;
+    failure = `Couldn't switch the agent on: ${errorText(err)}`;
   }
   return finish("agent", { sync: false, error: failure });
 }
