@@ -1,26 +1,109 @@
 @import "tailwindcss";
 
+/* Tokens follow the Cal.com-inspired system in open-design/design-systems/cal: grayscale canvas,
+   charcoal ink, ring-shadow edges instead of borders. `--muted` is darkened from #898989 to #6b6b6b
+   so small secondary text meets WCAG AA (4.5:1) on white. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f5f5f5;
+  --fg: #242424;
+  --fg-2: #111111;
+  --muted: #6b6b6b;
+  --border: rgba(34, 42, 53, 0.1);
+  --link: #0077cc;
+  --ok: #157f3c;
+  --ok-bg: #e8f5ec;
+  --warn: #9a5b00;
+  --warn-bg: #fff4e0;
+  --bad: #b42318;
+  --bad-bg: #fdecea;
+  --ring: 0 0 0 1px rgba(34, 42, 53, 0.08);
+  --elev: 0 1px 5px -4px rgba(19, 19, 22, 0.7), 0 0 0 1px rgba(34, 42, 53, 0.08), 0 4px 8px rgba(34, 42, 53, 0.05);
+  --focus: 0 0 0 3px rgba(59, 130, 246, 0.45);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-cal), var(--font-inter), ui-sans-serif, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* Element defaults live in the base layer so component classes (.btn-primary on an <a>) win. */
+@layer base {
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
   }
+  h1, h2, h3, .display {
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+  h3 { letter-spacing: 0.2px; }
+  a { color: inherit; }
+  :focus-visible { outline: none; box-shadow: var(--focus); border-radius: 6px; }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+.link { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
+
+@layer components {
+  .card { background: var(--surface); border-radius: 12px; box-shadow: var(--elev); }
+  .well { background: var(--surface-2); border-radius: 10px; }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    height: 36px; padding: 0 14px; border-radius: 8px;
+    font-size: 14px; font-weight: 600; line-height: 1; white-space: nowrap;
+    transition: opacity 120ms ease, transform 80ms ease, box-shadow 120ms ease;
+    cursor: pointer;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-primary { background: var(--fg); color: #fff; box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.15); }
+  .btn-primary:hover { opacity: 0.85; }
+  .btn-ghost { background: var(--surface); color: var(--fg); box-shadow: var(--elev); }
+  .btn-ghost:hover { background: var(--surface-2); }
+  .btn-danger { background: var(--surface); color: var(--bad); box-shadow: var(--ring); }
+  .btn-danger:hover { background: var(--bad-bg); }
+  .btn-sm { height: 30px; padding: 0 10px; font-size: 13px; }
+
+  .label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  .hint { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+  .input, .select, .textarea {
+    width: 100%; background: var(--surface); color: var(--fg);
+    border-radius: 8px; box-shadow: 0 0 0 1px rgba(34, 42, 53, 0.18);
+    padding: 8px 10px; font-size: 14px;
+  }
+  .input, .select { height: 36px; }
+  .textarea { min-height: 88px; resize: vertical; line-height: 1.45; }
+  .input:focus, .select:focus, .textarea:focus { outline: none; box-shadow: 0 0 0 1px var(--fg), var(--focus); }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px;
+    border-radius: 9999px; font-size: 12px; font-weight: 600; white-space: nowrap;
+    background: var(--surface-2); color: var(--fg);
+  }
+  .badge-ok { background: var(--ok-bg); color: var(--ok); }
+  .badge-warn { background: var(--warn-bg); color: var(--warn); }
+  .badge-bad { background: var(--bad-bg); color: var(--bad); }
+
+  .table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .table th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); padding: 10px 16px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .table td { padding: 12px 16px; border-bottom: 1px solid rgba(34, 42, 53, 0.06); vertical-align: top; }
+  .table tr:last-child td { border-bottom: 0; }
+  .table tbody tr:hover td { background: var(--surface-2); }
+
+  .tabular { font-variant-numeric: tabular-nums; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
 }

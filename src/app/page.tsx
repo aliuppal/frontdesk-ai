@@ -1,69 +1,105 @@
-import Image from "next/image";
+import Link from "next/link";
 
 export default function Home() {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
+    <main className="flex-1">
+      <header className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+        <span className="display text-lg">
+          FrontDesk<span className="text-muted">.ai</span>
+        </span>
+        <nav className="flex items-center gap-2">
+          <Link href="/login" className="btn btn-sm">Log in</Link>
+          <Link href="/signup" className="btn btn-primary btn-sm">Start free</Link>
+        </nav>
+      </header>
+
+      <section className="max-w-6xl mx-auto px-6 pt-20 pb-24 grid lg:grid-cols-[1.1fr_1fr] gap-14 items-center">
+        <div>
+          <p className="badge mb-6">For salons, spas, plumbers, HVAC and every shop that misses calls</p>
+          <h1 className="text-[44px] sm:text-[60px] leading-[1.05]">
+            Your phone gets answered.
+            <br />
+            Every call. Every hour.
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+          <p className="text-lg text-muted mt-6 max-w-xl leading-relaxed">
+            FrontDesk gives your business a local number with an AI receptionist on it. It talks to callers like a
+            person would, finds a free slot in your Google Calendar, books it, and emails everyone the details.
+          </p>
+          <div className="flex flex-wrap gap-3 mt-9">
+            <Link href="/signup" className="btn btn-primary h-11 px-5 text-[15px]">Get your number</Link>
+            <a href="#how" className="btn btn-ghost h-11 px-5 text-[15px]">See how a call goes</a>
+          </div>
+        </div>
+
+        {/* An example call, not an illustration: the product is the picture. */}
+        <div className="card p-6 text-[15px]" aria-label="Example call transcript">
+          <div className="flex items-center justify-between mb-5">
+            <div>
+              <div className="font-semibold">Example call · after hours</div>
+              <div className="text-xs text-muted">Tue 7:42 PM</div>
+            </div>
+            <span className="badge badge-ok">Booked</span>
+          </div>
+          <ol className="space-y-3">
+            {[
+              ["agent", "Thanks for calling Riverside Plumbing! How can I help?"],
+              ["user", "My water heater's leaking. Can someone come tomorrow?"],
+              ["agent", "I'm sorry to hear that. I have 9 AM or 1:30 PM tomorrow. Which works?"],
+              ["user", "Nine, please."],
+              ["agent", "You're booked for Wednesday at 9 AM. What's the address?"],
+            ].map(([who, text], i) => (
+              <li key={i} className={who === "agent" ? "pr-10" : "pl-10 text-right"}>
+                <span className={`inline-block rounded-xl px-3.5 py-2 text-left ${who === "agent" ? "bg-surface-2" : "bg-fg text-white"}`}>{text}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </section>
+
+      <section id="how" className="bg-surface-2 py-20">
+        <div className="max-w-6xl mx-auto px-6">
+          <h2 className="text-[36px] max-w-xl leading-tight">Set it up in ten minutes. It works while you sleep.</h2>
+          <div className="grid md:grid-cols-3 gap-5 mt-12">
+            {[
+              ["Tell it about your business", "Services, how long each takes, your hours, and how you like the phone answered."],
+              ["Connect Google Calendar", "It only offers times you're actually free, and adds every booking to your calendar."],
+              ["Forward your calls", "Use the new number, or forward missed and after-hours calls from your existing line."],
+            ].map(([title, body], i) => (
+              <div key={title} className="card p-6">
+                <div className="display text-sm text-muted tabular">0{i + 1}</div>
+                <h3 className="text-lg mt-3">{title}</h3>
+                <p className="text-sm text-muted mt-2 leading-relaxed">{body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="max-w-6xl mx-auto px-6 py-20 grid md:grid-cols-2 gap-10 items-center">
+        <div>
+          <h2 className="text-[36px] leading-tight">Every call, written down and replayable.</h2>
+          <p className="text-muted mt-4 leading-relaxed">
+            Read the transcript, play the recording, and click any line to jump to that moment. See who called, what they
+            needed and whether they booked, all in one place.
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+        <div className="card p-6">
+          <dl className="grid grid-cols-2 gap-y-4 text-sm">
+            <dt className="text-muted">Caller</dt>
+            <dd>Maria Lopez</dd>
+            <dt className="text-muted">Needed</dt>
+            <dd>Water heater leak</dd>
+            <dt className="text-muted">Address</dt>
+            <dd>418 Oak St, Austin</dd>
+            <dt className="text-muted">Outcome</dt>
+            <dd>
+              <span className="badge badge-ok">Booked · Wed 9:00 AM</span>
+            </dd>
+          </dl>
         </div>
-      </main>
-    </div>
+      </section>
+
+      <footer className="border-t border-black/5 py-8 text-center text-sm text-muted">FrontDesk AI</footer>
+    </main>
   );
 }

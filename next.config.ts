@@ -1,9 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
-  cacheComponents: true,
-  partialPrefetching: true,
+  // Every dashboard page is per-owner and request-time (cookies + RLS), so Cache Components is off:
+  // pages render dynamically per request under the classic model.
+  cacheComponents: false,
   turbopack: {
     rules: {
       "*.css": {
