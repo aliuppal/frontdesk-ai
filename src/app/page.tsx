@@ -3,6 +3,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { Faq } from "@/components/landing/Faq";
 import { HeroCall } from "@/components/landing/HeroCall";
 import { Reveal } from "@/components/landing/Reveal";
+import { VoiceLogo } from "@/components/landing/VoiceLogo";
 import s from "./landing.module.css";
 
 const INDUSTRIES = ["Hair salons", "Day spas", "Plumbers", "HVAC", "Electricians", "Cleaning services", "Auto repair", "Barbershops", "Landscapers", "Consultants"];
@@ -76,11 +77,7 @@ export default function Home() {
       <header className={s.header}>
         <div className={s.headerInner}>
           <Link href="/" className={s.logo}>
-            <span className={s.logoMark}>
-              <Icon size={15}>
-                <path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2" />
-              </Icon>
-            </span>
+            <VoiceLogo />
             <span>
               FrontDesk<span className="text-muted">.ai</span>
             </span>
@@ -283,7 +280,9 @@ export default function Home() {
 
       <footer className={s.footer}>
         <div className={s.footerInner}>
-          <span>© {new Date().getFullYear()} FrontDesk AI</span>
+          <span className="flex items-center gap-2.5">
+            <VoiceLogo size={22} /> © {new Date().getFullYear()} FrontDesk AI
+          </span>
           <span className="flex gap-4">
             <Link href="/login" className="hover:text-fg">Log in</Link>
             <Link href="/signup" className="hover:text-fg">Sign up</Link>
