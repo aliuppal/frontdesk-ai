@@ -71,8 +71,7 @@ export function HeroCall() {
     };
   }, []);
 
-  // Loud while a line is being "said"; a gentle idle shimmer while ringing, typing or after booking.
-  const speaking = st.shown > 0 && st.typing === null && !st.booked && !st.ringing;
+  const speaking = st.shown > 0 && SCRIPT[st.shown - 1].role === "agent" && !st.booked;
   const elapsed = Math.max(0, seconds - 2);
   const clock = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`;
 
@@ -97,9 +96,8 @@ export function HeroCall() {
             </div>
           </div>
           <div className={`${s.wave} ${speaking ? s.waveOn : ""}`}>
-            {Array.from({ length: 16 }, (_, i) => (
-              // Uneven delays and durations per bar so the motion reads as a voice, not a metronome.
-              <span key={i} style={{ animationDelay: `-${(i * 137) % 900}ms`, animationDuration: `${620 + ((i * 211) % 480)}ms` }} />
+            {Array.from({ length: 14 }, (_, i) => (
+              <span key={i} style={{ animationDelay: `${(i * 97) % 600}ms` }} />
             ))}
           </div>
         </div>

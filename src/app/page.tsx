@@ -59,6 +59,37 @@ function Words({ text, start, className = "" }: { text: string; start: number; c
   );
 }
 
+/**
+ * A sine wave twice as wide as its box with a period that divides half the width, so sliding it by
+ * -50% loops seamlessly. Used for the always-moving signal lines behind the hero.
+ */
+function wavePath(amplitude: number, wavelength: number, phase = 0): string {
+  const width = 2880;
+  const mid = 50;
+  let d = `M0 ${mid + amplitude * Math.sin(phase)}`;
+  for (let x = 12; x <= width; x += 12) d += ` L${x} ${(mid + amplitude * Math.sin((x / wavelength) * Math.PI * 2 + phase)).toFixed(2)}`;
+  return d;
+}
+
+const LINES = [
+  { top: "18%", amp: 18, wl: 480, phase: 0, cls: "lineSlow" },
+  { top: "34%", amp: 28, wl: 720, phase: 1.2, cls: "lineMid" },
+  { top: "52%", amp: 14, wl: 360, phase: 2.4, cls: "lineFast", accent: true },
+  { top: "68%", amp: 24, wl: 960, phase: 0.6, cls: "lineReverse" },
+] as const;
+
+function HeroLines() {
+  return (
+    <div className={s.heroLines} aria-hidden>
+      {LINES.map((l) => (
+        <svg key={l.top} className={`${s.heroLine} ${s[l.cls]} ${"accent" in l ? s.lineAccent : ""}`} style={{ top: l.top }} viewBox="0 0 2880 100" preserveAspectRatio="none">
+          <path d={wavePath(l.amp, l.wl, l.phase)} vectorEffect="non-scaling-stroke" />
+        </svg>
+      ))}
+    </div>
+  );
+}
+
 function SignupForm({ id, className = "" }: { id: string; className?: string }) {
   return (
     <form action="/signup" method="get" className={`${s.signup} ${className}`}>
@@ -93,6 +124,7 @@ export default function Home() {
       </header>
 
       <section className={s.hero}>
+        <HeroLines />
         <div className={s.heroInner}>
           <div>
             <span className={`${s.eyebrow} ${s.fadeUp}`}>
