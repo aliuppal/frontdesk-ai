@@ -11,7 +11,9 @@ import { INDUSTRIES } from "@/lib/voice/prompt";
 import {
   activateAgent,
   connectCalendar,
+  connectSipNumber,
   connectWhatsApp,
+  disconnectPhoneNumber,
   deleteService,
   disconnectCalendar,
   disconnectWhatsApp,
@@ -98,6 +100,9 @@ export default async function Settings({ searchParams }: PageProps<"/dashboard/s
                 <form action={activateAgent}>
                   <button className="btn btn-ghost btn-sm">Update agent now</button>
                 </form>
+                <form action={disconnectPhoneNumber}>
+                  <button className="btn btn-danger btn-sm">Remove number</button>
+                </form>
               </div>
             </div>
           ) : b.voice_agent_id ? (
@@ -107,9 +112,49 @@ export default async function Settings({ searchParams }: PageProps<"/dashboard/s
                 <p className="text-sm text-muted mt-3 max-w-lg">
                   Your agent is set up on ElevenLabs. Talk to it in your browser now.{" "}
                   {twilioReady
-                    ? "Click “Update agent now” to get its local phone number."
-                    : "A phone number is added automatically once Twilio is connected on this server (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN)."}
+                    ? "Click “Update agent now” to get a local number from Twilio, or connect your own number below."
+                    : "To take phone calls, connect a number from a SIP provider such as Telnyx or Zadarma below."}
                 </p>
+                <details className="mt-5 text-sm" open={!twilioReady}>
+                  <summary className="cursor-pointer font-semibold">Connect a phone number (SIP)</summary>
+                  <div className="well p-4 mt-3 space-y-3 text-muted leading-relaxed">
+                    <p>
+                      In your provider, point a SIP trunk at <code className="text-fg">sip.rtc.elevenlabs.io</code> (Telnyx: Voice → SIP Trunking → Create SIP
+                      connection → FQDN, inbound number format +E.164, transport TCP, then assign your number to it). Then enter the details here:
+                    </p>
+                    <form action={connectSipNumber} className="grid sm:grid-cols-2 gap-3 text-fg">
+                      <div>
+                        <label className="label" htmlFor="phone_number">Phone number</label>
+                        <input className="input tabular" id="phone_number" name="phone_number" placeholder="+1 512 555 0123" required />
+                      </div>
+                      <div>
+                        <label className="label" htmlFor="sip_address">Provider SIP address</label>
+                        <input className="input" id="sip_address" name="sip_address" defaultValue="sip.telnyx.com" required />
+                      </div>
+                      <div>
+                        <label className="label" htmlFor="sip_username">SIP username</label>
+                        <input className="input" id="sip_username" name="sip_username" autoComplete="off" placeholder="From the provider's outbound credentials" />
+                      </div>
+                      <div>
+                        <label className="label" htmlFor="sip_password">SIP password</label>
+                        <input className="input" id="sip_password" name="sip_password" type="password" autoComplete="new-password" />
+                      </div>
+                      <div>
+                        <label className="label" htmlFor="sip_transport">Transport</label>
+                        <select className="select" id="sip_transport" name="sip_transport" defaultValue="tcp">
+                          <option value="tcp">TCP (Telnyx)</option>
+                          <option value="udp">UDP</option>
+                          <option value="tls">TLS</option>
+                          <option value="auto">Auto</option>
+                        </select>
+                      </div>
+                      <div className="flex items-end">
+                        <button className="btn btn-primary w-full">Connect number</button>
+                      </div>
+                      <p className="hint sm:col-span-2">The username and password go straight to ElevenLabs for outgoing transfers; they aren&apos;t stored here.</p>
+                    </form>
+                  </div>
+                </details>
               </div>
               <div className="flex flex-col gap-3 items-start md:items-end">
                 <TestCallButton />

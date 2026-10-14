@@ -116,6 +116,54 @@ export async function syncAgent(businessId: string): Promise<SyncResult> {
   return { phoneNumber, phoneReady: !!phoneNumberId };
 }
 
+export interface SipNumberInput {
+  phoneNumber: string; // E.164, e.g. +15125550123
+  address: string; // provider's SIP host for outbound, e.g. sip.telnyx.com
+  transport: "tcp" | "udp" | "tls" | "auto";
+  username?: string;
+  password?: string;
+}
+
+/**
+ * Import a number from any SIP provider (Telnyx, Zadarma, Plivo…) into ElevenLabs and attach it to the
+ * business's agent. Used where Twilio isn't available. The provider side points its trunk at
+ * sip.rtc.elevenlabs.io; credentials are passed straight to ElevenLabs and not stored by us.
+ */
+export async function importSipNumber(businessId: string, input: SipNumberInput): Promise<void> {
+  const [b] = await sql<{ name: string; voice_agent_id: string | null; phone_number_id: string | null }>`
+    select name, voice_agent_id, phone_number_id from businesses where id = ${businessId}`;
+  if (!b?.voice_agent_id) throw new Error("Switch the agent on first.");
+  if (b.phone_number_id) throw new Error("This business already has a phone number. Remove it first.");
+  const created = await elevenlabs().conversationalAi.phoneNumbers.create({
+    provider: "sip_trunk",
+    phoneNumber: input.phoneNumber,
+    label: b.name.slice(0, 60),
+    agentId: b.voice_agent_id,
+    inboundTrunkConfig: { mediaEncryption: "allowed" },
+    outboundTrunkConfig: {
+      address: input.address,
+      transport: input.transport,
+      mediaEncryption: "allowed",
+      ...(input.username ? { credentials: { username: input.username, password: input.password || undefined } } : {}),
+    },
+  } as never);
+  const phoneNumberId = (created as { phoneNumberId: string }).phoneNumberId;
+  await sql`update businesses set phone_number = ${input.phoneNumber}, phone_number_id = ${phoneNumberId}, agent_synced_at = now() where id = ${businessId}`;
+}
+
+/** Remove the business's number from ElevenLabs (the number stays in the provider account). */
+export async function removePhoneNumber(businessId: string): Promise<void> {
+  const [b] = await sql<{ phone_number_id: string | null }>`select phone_number_id from businesses where id = ${businessId}`;
+  if (b?.phone_number_id) {
+    try {
+      await elevenlabs().conversationalAi.phoneNumbers.delete(b.phone_number_id);
+    } catch (err) {
+      console.error("phone number delete failed", err);
+    }
+  }
+  await sql`update businesses set phone_number = null, phone_number_id = null where id = ${businessId}`;
+}
+
 export interface WhatsAppNumber {
   phoneNumberId: string;
   phoneNumber: string;

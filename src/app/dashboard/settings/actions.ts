@@ -7,7 +7,7 @@ import { requireBusiness } from "@/lib/business";
 import { normalizePhone } from "@/lib/booking/phone";
 import { db, one, sql } from "@/lib/db";
 import { calKeyFor, connectCal, importCalEventTypes } from "@/lib/calendar/calcom";
-import { listWhatsAppNumbers, setWhatsAppAgent, syncAgent } from "@/lib/voice/elevenlabs";
+import { importSipNumber, listWhatsAppNumbers, removePhoneNumber, setWhatsAppAgent, syncAgent } from "@/lib/voice/elevenlabs";
 import { INDUSTRIES } from "@/lib/voice/prompt";
 
 // Each action: resolve the owner's business from their session, write rows scoped to that business id,
@@ -222,6 +222,45 @@ export async function connectWhatsApp(form: FormData) {
     return finish("agent", { error: `Couldn't connect WhatsApp: ${errorText(err)}` });
   }
   return finish("agent"); // syncAgent assigns the agent to the number
+}
+
+const sipForm = z.object({
+  phone_number: z.string().trim().min(8),
+  sip_address: z
+    .string()
+    .trim()
+    .regex(/^[a-z0-9.-]+(:\d+)?$/i, "SIP address is a host name like sip.telnyx.com"),
+  sip_transport: z.enum(["tcp", "udp", "tls", "auto"]),
+  sip_username: z.string().trim().optional(),
+  sip_password: z.string().optional(),
+});
+
+export async function connectSipNumber(form: FormData) {
+  const { business } = await requireBusiness();
+  const parsed = sipForm.safeParse(Object.fromEntries(form));
+  if (!parsed.success) return finish("agent", { error: parsed.error.issues[0].message });
+  const v = parsed.data;
+  const phone = normalizePhone(v.phone_number);
+  if (!/^\+\d{8,15}$/.test(phone)) return finish("agent", { error: "Enter the number in international format, e.g. +1 512 555 0123." });
+  try {
+    if (!business.voice_agent_id) await syncAgent(business.id); // the number needs an agent to answer
+    await importSipNumber(business.id, {
+      phoneNumber: phone,
+      address: v.sip_address,
+      transport: v.sip_transport,
+      username: v.sip_username || undefined,
+      password: v.sip_password || undefined,
+    });
+  } catch (err) {
+    return finish("agent", { error: `Couldn't connect the number: ${errorText(err)}` });
+  }
+  return finish("agent", { sync: false });
+}
+
+export async function disconnectPhoneNumber() {
+  const { business } = await requireBusiness();
+  await removePhoneNumber(business.id);
+  return finish("agent", { sync: false });
 }
 
 export async function disconnectWhatsApp() {
