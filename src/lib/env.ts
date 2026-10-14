@@ -11,8 +11,6 @@ type Key =
   | "ELEVENLABS_LLM"
   | "TWILIO_ACCOUNT_SID"
   | "TWILIO_AUTH_TOKEN"
-  | "GOOGLE_CLIENT_ID"
-  | "GOOGLE_CLIENT_SECRET"
   | "RESEND_API_KEY"
   | "EMAIL_FROM";
 
@@ -21,8 +19,6 @@ const FEATURE: Partial<Record<Key, string>> = {
   ELEVENLABS_WEBHOOK_SECRET: "Call history (ElevenLabs webhook)",
   TWILIO_ACCOUNT_SID: "Phone numbers (Twilio)",
   TWILIO_AUTH_TOKEN: "Phone numbers (Twilio)",
-  GOOGLE_CLIENT_ID: "Google Calendar",
-  GOOGLE_CLIENT_SECRET: "Google Calendar",
   RESEND_API_KEY: "Email",
   EMAIL_FROM: "Email",
   ENCRYPTION_KEY: "Encryption",

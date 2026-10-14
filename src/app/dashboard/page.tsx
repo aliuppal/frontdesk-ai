@@ -4,7 +4,7 @@ import { CallOutcome, Empty, PageHeader, Stat } from "@/components/ui";
 import { requireBusiness } from "@/lib/business";
 import { formatPhone } from "@/lib/booking/phone";
 import { fmtDateTime, fmtDay, fmtDuration, fmtTime } from "@/lib/format";
-import { calendarConnection } from "@/lib/calendar/google";
+import { calConnection } from "@/lib/calendar/calcom";
 import { sql } from "@/lib/db";
 import type { Appointment, Call } from "@/lib/types";
 
@@ -20,7 +20,7 @@ export default async function Overview() {
     sql<Call>`select * from calls where business_id = ${b.id} order by started_at desc nulls last limit 6`,
     sql<Appointment>`select * from appointments where business_id = ${b.id} and status = 'booked' and starts_at >= now()
                      order by starts_at limit 6`,
-    calendarConnection(b.id),
+    calConnection(b.id),
   ]);
 
   const booked = calls.filter((c) => c.appointment_booked).length;
@@ -29,8 +29,9 @@ export default async function Overview() {
 
   const steps = [
     { done: true, label: "Business details added", href: "/dashboard/settings" },
-    { done: calendar != null, label: "Google Calendar connected", href: "/dashboard/settings#calendar" },
-    { done: !!b.phone_number, label: "Phone agent switched on", href: "/dashboard/settings#agent" },
+    { done: calendar != null, label: "Cal.com connected", href: "/dashboard/settings#calendar" },
+    { done: !!b.voice_agent_id, label: "Phone agent switched on", href: "/dashboard/settings#agent" },
+    { done: !!(b.phone_number || b.whatsapp_number), label: "Phone number or WhatsApp connected", href: "/dashboard/settings#agent" },
   ];
 
   return (

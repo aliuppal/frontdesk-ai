@@ -108,9 +108,45 @@ export async function syncAgent(businessId: string): Promise<SyncResult> {
     phoneNumberId = (created as { phoneNumberId: string }).phoneNumberId;
   }
 
+  // WhatsApp: the business's WhatsApp Business number (connected in the workspace) answers with the same agent.
+  if (b.whatsapp_phone_number_id) await setWhatsAppAgent(b.whatsapp_phone_number_id, agentId);
+
   await sql`update businesses set voice_agent_id = ${agentId}, voice_tool_ids = ${toolIds}, phone_number = ${phoneNumber},
               phone_number_id = ${phoneNumberId}, agent_synced_at = now() where id = ${businessId}`;
   return { phoneNumber, phoneReady: !!phoneNumberId };
+}
+
+export interface WhatsAppNumber {
+  phoneNumberId: string;
+  phoneNumber: string;
+  name: string;
+  assignedAgentId: string | null;
+  tokenExpired: boolean;
+}
+
+/**
+ * WhatsApp Business numbers imported into the ElevenLabs workspace. Importing is a one-time Meta sign-in
+ * in the ElevenLabs dashboard (WhatsApp → Import account); everything after that happens here.
+ */
+export async function listWhatsAppNumbers(): Promise<WhatsAppNumber[]> {
+  const res = await elevenlabs().conversationalAi.whatsappAccounts.list();
+  return res.items.map((a) => ({
+    phoneNumberId: a.phoneNumberId,
+    phoneNumber: a.phoneNumber,
+    name: a.phoneNumberName || a.businessAccountName,
+    assignedAgentId: a.assignedAgentId ?? null,
+    tokenExpired: !!a.isTokenExpired,
+  }));
+}
+
+/** Point a WhatsApp number at an agent (null detaches it, so WhatsApp calls and messages stop being answered). */
+export async function setWhatsAppAgent(phoneNumberId: string, agentId: string | null): Promise<void> {
+  await elevenlabs().conversationalAi.whatsappAccounts.update(phoneNumberId, {
+    assignedAgentId: agentId as string,
+    enableMessaging: !!agentId,
+    enableAudioMessageResponse: true,
+    enableTypingIndicator: true,
+  });
 }
 
 /** Short-lived signed URL so the owner can talk to their agent in the browser without a phone. */

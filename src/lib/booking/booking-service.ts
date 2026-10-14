@@ -2,22 +2,29 @@ import "server-only";
 import { DateTime } from "luxon";
 import { z } from "zod";
 import { loadBusinessConfig } from "../business";
-import { calendarFor, createEvent, deleteEvent, freeBusy } from "../calendar/google";
+import { calCancelBooking, calCreateBooking, calKeyFor, calSlots, CalError } from "../calendar/calcom";
 import { one, pgCode, sql } from "../db";
 import type { Appointment, Business, BusinessConfig, Service, Staff } from "../types";
 import { findSlots, slotsForDate, spokenLabel, spread, type Busy, type BookingRules, type StaffBusy, type TimeOfDay } from "./availability";
+import { pickCalSlots } from "./cal-slots";
 import { normalizePhone } from "./phone";
 
 // Orchestrates availability and booking for the voice agent. Every return value has a `result`
 // sentence the agent can say or paraphrase; tools never throw at the caller.
+//
+// Two schedules:
+// - Cal.com: services imported from a connected Cal.com account (cal_event_type_id set). Cal.com owns
+//   availability and the booking; we keep a copy of the appointment for the dashboard.
+// - Built-in: everything else. Business hours + our own appointments, with the overlap guard in Postgres.
 
 export interface ToolReply {
   result: string;
   [key: string]: unknown;
 }
 
-const CALENDAR_DOWN =
+const SCHEDULE_DOWN =
   "I can't reach the schedule right now. Take the caller's name, number and what they need, and tell them the team will call back to book.";
+const SLOT_TAKEN = "Sorry, that time is no longer available. Check availability again and offer the caller other times.";
 
 function matchService(services: Service[], name: string): Service | undefined {
   const active = services.filter((s) => s.active);
@@ -44,24 +51,17 @@ function rulesFor(b: Business, service: Service): BookingRules {
   };
 }
 
-/** Busy blocks per staff member: Google Calendar (if connected) plus appointments already in our DB. */
+/** Busy blocks per staff member from appointments booked on the built-in schedule. */
 async function staffBusy(b: Business, staff: Staff[], from: Date, to: Date): Promise<StaffBusy[]> {
   const ids = staff.map((s) => s.id);
   const appts = await sql<{ staff_id: string; starts_at: string; ends_at: string }>`
     select staff_id, starts_at, ends_at from appointments
     where business_id = ${b.id} and status = 'booked' and staff_id = any(${ids}::uuid[])
       and starts_at < ${to.toISOString()} and ends_at > ${from.toISOString()}`;
-
-  const cal = await calendarFor(b.id);
-  const google = cal ? await freeBusy(cal, staff.map((s) => s.calendar_id), from, to) : {};
-
-  return staff.map((s) => {
-    const busy: Busy[] = [
-      ...(google[s.calendar_id] ?? []),
-      ...appts.filter((a) => a.staff_id === s.id).map((a) => ({ start: new Date(a.starts_at), end: new Date(a.ends_at) })),
-    ];
-    return { staffId: s.id, busy };
-  });
+  return staff.map((s) => ({
+    staffId: s.id,
+    busy: appts.filter((a) => a.staff_id === s.id).map((a): Busy => ({ start: new Date(a.starts_at), end: new Date(a.ends_at) })),
+  }));
 }
 
 const checkArgs = z.object({
@@ -82,44 +82,53 @@ export async function checkAvailability(businessId: string, rawArgs: unknown, no
   if (!service) {
     return { result: `We don't offer "${args.service}". Services available: ${config.services.filter((s) => s.active).map((s) => s.name).join(", ")}.` };
   }
-  const staff = eligibleStaff(config, service, args.staff_name);
-  if (!staff.length) {
-    return { result: args.staff_name ? `${args.staff_name} doesn't do ${service.name}. Offer anyone else on the team.` : `Nobody is currently set up for ${service.name}. Take a message.` };
-  }
 
   const tz = b.timezone;
+  const tod = (args.time_of_day ?? "any") as TimeOfDay;
   const today = DateTime.fromJSDate(now).setZone(tz).startOf("day");
   const requested = DateTime.fromISO(args.date, { zone: tz }).startOf("day");
   const from = requested.isValid && requested > today ? requested : today;
-  const to = from.plus({ days: 15 });
-  const hours = config.hours.map((h) => ({ weekday: h.weekday, open: h.open_time, close: h.close_time }));
 
-  let busy: StaffBusy[];
-  try {
-    busy = await staffBusy(b, staff, from.toJSDate(), to.toJSDate());
-  } catch (err) {
-    console.error("availability: calendar lookup failed", businessId, err);
-    return { result: CALENDAR_DOWN, error: "calendar_unavailable" };
+  let found: { date: string; starts: Date[]; with?: (d: Date) => string | undefined } | null;
+
+  if (service.cal_event_type_id) {
+    const apiKey = await calKeyFor(b.id);
+    if (!apiKey) return { result: SCHEDULE_DOWN, error: "calendar_not_connected" };
+    try {
+      const data = await calSlots(apiKey, service.cal_event_type_id, from.toISODate()!, from.plus({ days: 14 }).toISODate()!, tz);
+      found = pickCalSlots(data, tz, tod, from.toISODate()!);
+    } catch (err) {
+      console.error("availability: Cal.com lookup failed", businessId, err);
+      return { result: SCHEDULE_DOWN, error: "calendar_unavailable" };
+    }
+  } else {
+    const staff = eligibleStaff(config, service, args.staff_name);
+    if (!staff.length) {
+      return { result: args.staff_name ? `${args.staff_name} doesn't do ${service.name}. Offer anyone else on the team.` : `Nobody is currently set up for ${service.name}. Take a message.` };
+    }
+    const hours = config.hours.map((h) => ({ weekday: h.weekday, open: h.open_time, close: h.close_time }));
+    const busy = await staffBusy(b, staff, from.toJSDate(), from.plus({ days: 15 }).toJSDate());
+    const slots = findSlots(from.toISODate()!, hours, rulesFor(b, service), busy, now, tod);
+    const names = new Map(staff.map((s) => [s.id, s.name]));
+    const withFor = new Map(slots?.slots.map((s) => [s.start.getTime(), s.staffIds.map((id) => names.get(id)).join(" or ")]) ?? []);
+    found = slots ? { date: slots.date, starts: slots.slots.map((s) => s.start), with: config.staff.length > 1 ? (d) => withFor.get(d.getTime()) : undefined } : null;
   }
 
-  const found = findSlots(from.toISODate()!, hours, rulesFor(b, service), busy, now, (args.time_of_day ?? "any") as TimeOfDay);
   if (!found) {
-    return { result: `There are no openings for ${service.name} in the next two weeks${args.time_of_day && args.time_of_day !== "any" ? ` in the ${args.time_of_day}` : ""}. Offer a different time of day, or take a message for the team.` };
+    return { result: `There are no openings for ${service.name} in the next two weeks${tod !== "any" ? ` in the ${tod}` : ""}. Offer a different time of day, or take a message for the team.` };
   }
 
-  const staffName = new Map(staff.map((s) => [s.id, s.name]));
-  const slots = spread(found.slots, 6).map((s) => ({
-    start_time: DateTime.fromJSDate(s.start).setZone(tz).toISO(),
-    label: spokenLabel(s.start, tz),
-    ...(config.staff.length > 1 ? { with: s.staffIds.map((id) => staffName.get(id)).join(" or ") } : {}),
+  const slots = spread(found.starts, 6).map((start) => ({
+    start_time: DateTime.fromJSDate(start).setZone(tz).toISO(),
+    label: spokenLabel(start, tz),
+    ...(found.with?.(start) ? { with: found.with(start) } : {}),
   }));
-  const sameDay = found.date === args.date;
   const dayLabel = DateTime.fromISO(found.date, { zone: tz }).toFormat("cccc, LLLL d");
-
   return {
-    result: sameDay
-      ? `Openings for ${service.name} (${service.duration_minutes} minutes) on ${dayLabel}.`
-      : `No openings on the requested day. The next openings for ${service.name} are on ${dayLabel}.`,
+    result:
+      found.date === args.date
+        ? `Openings for ${service.name} (${service.duration_minutes} minutes) on ${dayLabel}.`
+        : `No openings on the requested day. The next openings for ${service.name} are on ${dayLabel}.`,
     date: found.date,
     slots,
   };
@@ -176,31 +185,60 @@ export async function bookAppointment(businessId: string, callId: string | null,
     if (existing) return already(existing);
   }
 
-  const staff = eligibleStaff(config, service, args.staff_name);
-  if (!staff.length) return { reply: { result: "Nobody on the team is set up for that service. Take a message instead." } };
-
-  const localDate = start.setZone(tz).toISODate()!;
-  const hours = config.hours.map((h) => ({ weekday: h.weekday, open: h.open_time, close: h.close_time }));
-  let busy: StaffBusy[];
-  try {
-    const dayStart = DateTime.fromISO(localDate, { zone: tz }).startOf("day");
-    busy = await staffBusy(b, staff, dayStart.toJSDate(), dayStart.plus({ days: 1 }).toJSDate());
-  } catch (err) {
-    console.error("booking: calendar lookup failed", businessId, err);
-    return { reply: { result: CALENDAR_DOWN, error: "calendar_unavailable" } };
-  }
-
-  const slot = slotsForDate(localDate, hours, rulesFor(b, service), busy, now).find((s) => s.start.getTime() === start.toMillis());
-  if (!slot) {
-    return { reply: { result: "Sorry, that time is no longer available. Check availability again and offer the caller other times.", error: "slot_taken" } };
-  }
-  const chosen = config.staff.find((s) => s.id === slot.staffIds[0])!;
-
   const phone = normalizePhone(args.customer_phone);
   const email = args.customer_email ? args.customer_email.trim().toLowerCase() : null;
   const name = args.customer_name.trim();
   const address = args.address?.trim() || null;
   const notes = args.notes?.trim() || null;
+  const end = start.plus({ minutes: service.duration_minutes });
+
+  // Pick who/what holds the slot: Cal.com booking, or a staff member on the built-in schedule.
+  let staffId: string;
+  let calUid: string | null = null;
+  let withName: string | null = null;
+
+  if (service.cal_event_type_id) {
+    const apiKey = await calKeyFor(b.id);
+    if (!apiKey) return { reply: { result: SCHEDULE_DOWN, error: "calendar_not_connected" } };
+    try {
+      const booking = await calCreateBooking(apiKey, {
+        eventTypeId: service.cal_event_type_id,
+        start: start.toJSDate(),
+        name,
+        // Cal.com requires an attendee email; without one the confirmation goes to the business instead.
+        email: email ?? b.notification_email,
+        phone,
+        timeZone: tz,
+        notes: [notes, address && `Address: ${address}`, `Phone: ${phone}`].filter(Boolean).join("\n"),
+        metadata: { source: "frontdesk-ai", ...(callId ? { conversation_id: callId } : {}) },
+      });
+      calUid = booking.uid;
+    } catch (err) {
+      // Only a genuinely unavailable time should send the agent back to re-check; anything else (bad email,
+      // misconfigured event type) means "take a message", with the real reason in the logs.
+      const message = err instanceof CalError ? err.message : String(err);
+      if (err instanceof CalError && err.status >= 400 && err.status < 500 && /no_available_users|not available|unavailable|already (has|have) (a )?booking|busy|reserved/i.test(message)) {
+        return { reply: { result: SLOT_TAKEN, error: "slot_taken" } };
+      }
+      if (err instanceof CalError && /email/i.test(message) && email) {
+        return { reply: { result: "That email address doesn't seem to work. Ask the caller to spell it again, or book without an email.", error: "invalid_email" } };
+      }
+      console.error("booking: Cal.com booking failed", businessId, message);
+      return { reply: { result: SCHEDULE_DOWN, error: "calendar_unavailable" } };
+    }
+    staffId = (config.staff.find((s) => s.is_default) ?? config.staff[0]).id;
+  } else {
+    const staff = eligibleStaff(config, service, args.staff_name);
+    if (!staff.length) return { reply: { result: "Nobody on the team is set up for that service. Take a message instead." } };
+    const localDate = start.setZone(tz).toISODate()!;
+    const dayStart = DateTime.fromISO(localDate, { zone: tz }).startOf("day");
+    const hours = config.hours.map((h) => ({ weekday: h.weekday, open: h.open_time, close: h.close_time }));
+    const busy = await staffBusy(b, staff, dayStart.toJSDate(), dayStart.plus({ days: 1 }).toJSDate());
+    const slot = slotsForDate(localDate, hours, rulesFor(b, service), busy, now).find((s) => s.start.getTime() === start.toMillis());
+    if (!slot) return { reply: { result: SLOT_TAKEN, error: "slot_taken" } };
+    staffId = slot.staffIds[0];
+    if (config.staff.length > 1) withName = config.staff.find((s) => s.id === staffId)?.name ?? null;
+  }
 
   let customerId: string | null = null;
   try {
@@ -222,61 +260,38 @@ export async function bookAppointment(businessId: string, callId: string | null,
   try {
     appt = await one<Appointment>(sql`
       insert into appointments (business_id, customer_id, service_id, staff_id, conversation_id, service_name, starts_at, ends_at,
-                                customer_name, customer_phone, customer_email, address, notes)
-      values (${b.id}, ${customerId}, ${service.id}, ${chosen.id}, ${callId}, ${service.name}, ${slot.start.toISOString()},
-              ${slot.end.toISOString()}, ${name}, ${phone}, ${email}, ${address}, ${notes})
+                                customer_name, customer_phone, customer_email, address, notes, cal_booking_uid)
+      values (${b.id}, ${customerId}, ${service.id}, ${staffId}, ${callId}, ${service.name}, ${start.toUTC().toISO()},
+              ${end.toUTC().toISO()}, ${name}, ${phone}, ${email}, ${address}, ${notes}, ${calUid})
       returning *`);
   } catch (err) {
-    // 23P01 = exclusion violation: another caller took this slot a moment ago.
-    if (pgCode(err) === "23P01") return { reply: { result: "Sorry, someone just booked that time. Check availability again and offer other times.", error: "slot_taken" } };
+    // 23P01 = overlap on the built-in schedule: another caller took this slot a moment ago.
+    if (pgCode(err) === "23P01") return { reply: { result: SLOT_TAKEN, error: "slot_taken" } };
     // 23505 = the same call booked the same start concurrently (a retry raced the first request).
     if (pgCode(err) === "23505" && callId) {
       const existing = await existingBooking(callId, startIso);
       if (existing) return already(existing);
     }
     console.error("booking: insert failed", err);
-    return { reply: { result: CALENDAR_DOWN, error: "booking_failed" } };
+    // The Cal.com booking (if any) exists even though our copy failed; the owner still sees it in Cal.com.
+    return { reply: { result: calUid ? `Booked: ${service.name} on ${spokenLabel(start.toJSDate(), tz)}.` : SCHEDULE_DOWN, error: "record_failed" } };
   }
-  if (!appt) return { reply: { result: CALENDAR_DOWN, error: "booking_failed" } };
-
-  // Calendar event is best-effort: the booking stands even if Google is down, and the dashboard flags it.
-  try {
-    const cal = await calendarFor(b.id);
-    if (cal) {
-      const eventId = await createEvent(cal, chosen.calendar_id, {
-        summary: `${service.name} — ${name}`,
-        description: [`Phone: ${phone}`, email && `Email: ${email}`, address && `Address: ${address}`, notes && `Notes: ${notes}`, "Booked by FrontDesk AI phone agent."]
-          .filter(Boolean)
-          .join("\n"),
-        start: slot.start,
-        end: slot.end,
-        timezone: tz,
-        location: address,
-      });
-      await sql`update appointments set google_event_id = ${eventId} where id = ${appt.id}`;
-      appt.google_event_id = eventId;
-    }
-  } catch (err) {
-    console.error("booking: google event failed", err);
-    await sql`update appointments set calendar_sync_error = ${(err as Error).message.slice(0, 500)} where id = ${appt.id}`;
-  }
+  if (!appt) return { reply: { result: SCHEDULE_DOWN, error: "booking_failed" } };
 
   if (callId) {
     await sql`update calls set appointment_booked = true, customer_id = coalesce(${customerId}, customer_id) where conversation_id = ${callId}`;
   }
 
+  const sentence = `Booked: ${service.name} on ${spokenLabel(start.toJSDate(), tz)}${withName ? ` with ${withName}` : ""}`.replace(/\.$/, "");
   return {
-    reply: {
-      result: `${`Booked: ${service.name} on ${spokenLabel(slot.start, tz)}${config.staff.length > 1 ? ` with ${chosen.name}` : ""}`.replace(/\.$/, "")}.${email ? " A confirmation email is on its way." : ""}`,
-      appointment_id: appt.id,
-    },
+    reply: { result: `${sentence}.${email ? " A confirmation email is on its way." : ""}`, appointment_id: appt.id },
     appointment: appt,
     business: b,
     created: true,
   };
 }
 
-/** Owner cancels from the dashboard: mark cancelled, remove the Google event. */
+/** Owner cancels from the dashboard: mark cancelled here and in Cal.com. */
 export async function cancelAppointment(businessId: string, appointmentId: string): Promise<{ appointment: Appointment; business: Business }> {
   const appt = await one<Appointment>(sql`
     update appointments set status = 'cancelled'
@@ -284,13 +299,12 @@ export async function cancelAppointment(businessId: string, appointmentId: strin
     returning *`);
   if (!appt) throw new Error("Appointment not found or already cancelled");
   const business = (await one<Business>(sql`select * from businesses where id = ${businessId}`))!;
-  if (appt.google_event_id) {
+  if (appt.cal_booking_uid) {
     try {
-      const staff = await one<{ calendar_id: string }>(sql`select calendar_id from staff where id = ${appt.staff_id}`);
-      const cal = await calendarFor(businessId);
-      if (cal && staff) await deleteEvent(cal, staff.calendar_id, appt.google_event_id);
+      const apiKey = await calKeyFor(businessId);
+      if (apiKey) await calCancelBooking(apiKey, appt.cal_booking_uid, "Cancelled from the FrontDesk dashboard");
     } catch (err) {
-      console.error("cancel: google delete failed", err);
+      console.error("cancel: Cal.com cancel failed", err);
     }
   }
   return { appointment: appt, business };

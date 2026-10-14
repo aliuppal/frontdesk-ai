@@ -37,6 +37,7 @@ export default async function CallDetail({ params }: PageProps<"/dashboard/calls
         <div>
           <h1 className="text-[28px] leading-tight">{name}</h1>
           <p className="text-sm text-muted mt-1 tabular">
+            {call.channel === "whatsapp" ? "WhatsApp · " : ""}
             {formatPhone(call.from_number) || "Web call"} · {fmtDateTime(call.started_at, b.timezone)} · {fmtDuration(call.duration_seconds)}
           </p>
         </div>

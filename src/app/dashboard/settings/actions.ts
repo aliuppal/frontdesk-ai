@@ -6,7 +6,8 @@ import { z } from "zod";
 import { requireBusiness } from "@/lib/business";
 import { normalizePhone } from "@/lib/booking/phone";
 import { db, one, sql } from "@/lib/db";
-import { syncAgent } from "@/lib/voice/elevenlabs";
+import { calKeyFor, connectCal, importCalEventTypes } from "@/lib/calendar/calcom";
+import { listWhatsAppNumbers, setWhatsAppAgent, syncAgent } from "@/lib/voice/elevenlabs";
 import { INDUSTRIES } from "@/lib/voice/prompt";
 
 // Each action: resolve the owner's business from their session, write rows scoped to that business id,
@@ -173,10 +174,67 @@ export async function removeStaff(form: FormData) {
   return finish("staff");
 }
 
+export async function connectCalendar(form: FormData) {
+  const { business } = await requireBusiness();
+  const apiKey = String(form.get("cal_api_key") ?? "").trim();
+  if (!/^cal_(live|test)_[A-Za-z0-9]+$/.test(apiKey)) return finish("calendar", { error: "That doesn't look like a Cal.com API key (it starts with cal_live_)." });
+  try {
+    const count = await connectCal(business.id, apiKey);
+    if (!count) return finish("calendar", { error: "Connected, but this Cal.com account has no event types yet. Create one in Cal.com, then click Refresh." });
+  } catch (err) {
+    return finish("calendar", { error: `Cal.com didn't accept that key: ${errorText(err)}` });
+  }
+  return finish("calendar"); // re-syncs the agent so it offers the imported services
+}
+
+export async function refreshCalendar() {
+  const { business } = await requireBusiness();
+  const apiKey = await calKeyFor(business.id);
+  if (!apiKey) return finish("calendar", { error: "Connect Cal.com first." });
+  try {
+    await importCalEventTypes(business.id, apiKey);
+  } catch (err) {
+    return finish("calendar", { error: `Couldn't load event types from Cal.com: ${errorText(err)}` });
+  }
+  return finish("calendar");
+}
+
 export async function disconnectCalendar() {
   const { business } = await requireBusiness();
-  await sql`delete from calendar_connections where business_id = ${business.id}`;
-  return finish("calendar", { sync: false });
+  await sql`delete from cal_connections where business_id = ${business.id}`;
+  // Cal.com services can't be booked without the connection: hide them until it's reconnected.
+  await sql`update services set active = false where business_id = ${business.id} and cal_event_type_id is not null`;
+  return finish("calendar");
+}
+
+export async function connectWhatsApp(form: FormData) {
+  const { business } = await requireBusiness();
+  const phoneNumberId = String(form.get("whatsapp_phone_number_id") ?? "");
+  try {
+    const number = (await listWhatsAppNumbers()).find((n) => n.phoneNumberId === phoneNumberId);
+    if (!number) return finish("agent", { error: "That WhatsApp number isn't connected to the ElevenLabs workspace." });
+    if (number.assignedAgentId && number.assignedAgentId !== business.voice_agent_id) {
+      const owner = await one(sql`select 1 from businesses where voice_agent_id = ${number.assignedAgentId}`);
+      if (owner) return finish("agent", { error: "That WhatsApp number is already answering for another business." });
+    }
+    await sql`update businesses set whatsapp_phone_number_id = ${number.phoneNumberId}, whatsapp_number = ${number.phoneNumber} where id = ${business.id}`;
+  } catch (err) {
+    return finish("agent", { error: `Couldn't connect WhatsApp: ${errorText(err)}` });
+  }
+  return finish("agent"); // syncAgent assigns the agent to the number
+}
+
+export async function disconnectWhatsApp() {
+  const { business } = await requireBusiness();
+  if (business.whatsapp_phone_number_id) {
+    try {
+      await setWhatsAppAgent(business.whatsapp_phone_number_id, null);
+    } catch (err) {
+      console.error("whatsapp detach failed", err);
+    }
+  }
+  await sql`update businesses set whatsapp_phone_number_id = null, whatsapp_number = null where id = ${business.id}`;
+  return finish("agent", { sync: false });
 }
 
 export async function activateAgent() {

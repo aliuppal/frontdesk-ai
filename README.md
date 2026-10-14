@@ -2,7 +2,7 @@
 
 An AI receptionist for US home and local service businesses (salons, spas, plumbers, HVAC, cleaners…).
 Each business gets a local phone number answered 24/7 by a voice agent that talks to callers, finds a
-free slot in Google Calendar, books it, and emails confirmations. Owners log into a dashboard to read
+free slot in the business's Cal.com schedule, books it there, and confirms. The same agent also answers WhatsApp calls and chats. Owners log into a dashboard to read
 transcripts, play recordings and see every call, appointment and customer.
 
 Design spec: [docs/superpowers/specs/2026-10-14-voice-booking-agent-design.md](docs/superpowers/specs/2026-10-14-voice-booking-agent-design.md)
@@ -10,11 +10,11 @@ Design spec: [docs/superpowers/specs/2026-10-14-voice-booking-agent-design.md](d
 ## How it works
 
 ```
-Caller → Twilio number → ElevenLabs agent (speech ↔ LLM ↔ ElevenLabs voice)
+Caller → Twilio number or WhatsApp → ElevenLabs agent (speech ↔ LLM ↔ ElevenLabs voice)
                                │ HTTPS + per-business x-frontdesk-key
                                ▼
-             /api/tools/check-availability  → Google free/busy + booked appointments (Neon)
-             /api/tools/book-appointment    → appointment row + Google event + Resend emails
+             /api/tools/check-availability  → Cal.com slots (or built-in hours + appointments in Neon)
+             /api/tools/book-appointment    → Cal.com booking + appointment row + Resend emails
              /api/voice/webhook (signed)    → transcript, summary, extracted fields; MP3 → Vercel Blob (private)
 Owner → /dashboard (email + password login, sessions in Neon; every query scoped to the owner's business)
 ```
@@ -25,7 +25,8 @@ Owner → /dashboard (email + password login, sessions in Neon; every query scop
 | Phone numbers | [Twilio](https://twilio.com) | ~$1.15/month per local number + per-minute voice |
 | Database | [Neon](https://neon.tech) Postgres | Accounts, sessions, businesses, calls, appointments |
 | Call recordings | Vercel Blob (private store) | Streamed to owners through `/api/recordings/[callId]` |
-| Calendar | Google Calendar API | Each business connects its own Google account |
+| Calendar | [Cal.com](https://cal.com) API v2 | Each business pastes its own Cal.com API key; event types become services |
+| WhatsApp | ElevenLabs WhatsApp + Meta Cloud API | Customer-started WhatsApp calls are free on Meta's side |
 | Email | [Resend](https://resend.com) | Customer confirmation + owner alert |
 | Hosting | Vercel | No always-on server needed |
 
@@ -47,18 +48,20 @@ The site runs with only those two settings. Each integration switches on when it
 - **Phone numbers:** add `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN`. "Switch on my phone agent" (or "Update
   agent now") then buys a local number and imports it into ElevenLabs, assigned to that business's agent.
   ElevenLabs must reach the tool and webhook URLs, so test calls against the deployed site.
-- **Google Calendar:** enable the Calendar API, create an OAuth web client with redirect URI
-  `<APP_URL>/api/google/callback`, add the calendar scopes to the consent screen, and add owners as test
-  users while the app is in Testing mode. Set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`.
+- **Cal.com:** each owner pastes a Cal.com API key in Settings → Cal.com. Event types are imported as services;
+  Cal.com owns availability, buffers and confirmation emails. Bookings without a customer email use the
+  business alert email as the attendee (Cal.com requires one).
+- **WhatsApp:** import the WhatsApp Business number once in the ElevenLabs dashboard (Agents → WhatsApp →
+  Import account) and allow voice calls in WhatsApp Manager. Owners then pick it in Settings → Phone agent.
 - **Email:** verify a sending domain in Resend and set `RESEND_API_KEY` and `EMAIL_FROM`.
 
 After adding env vars on Vercel, redeploy so they take effect.
 
 ## First booking, end to end
 
-1. Settings → connect Google Calendar, adjust hours, then **Switch on my phone agent** (buys the number).
+1. Settings → connect Cal.com, then **Switch on my phone agent** (buys a number when Twilio is set up).
 2. Click **Talk to it in your browser**, or call the number, and book something.
-3. Check: the event is in Google Calendar, the emails arrived, and the call shows under **Calls** with
+3. Check: the booking is in Cal.com, the emails arrived, and the call shows under **Calls** with
    transcript, summary and recording.
 
 ## Development

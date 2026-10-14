@@ -26,14 +26,16 @@ function config(overrides: Partial<BusinessConfig["business"]> = {}, staffCount 
       voice_tool_ids: [],
       phone_number: null,
       phone_number_id: null,
+      whatsapp_phone_number_id: null,
+      whatsapp_number: null,
       agent_synced_at: null,
       created_at: "2026-10-14T00:00:00Z",
       ...overrides,
     },
     hours: [{ id: "h1", business_id: "b1", weekday: 1, open_time: "08:00:00", close_time: "16:00:00" }],
     services: [
-      { id: "s1", business_id: "b1", name: "Drain cleaning", duration_minutes: 90, price_note: "from $149", description: null, active: true },
-      { id: "s2", business_id: "b1", name: "Old service", duration_minutes: 30, price_note: null, description: null, active: false },
+      { id: "s1", business_id: "b1", name: "Drain cleaning", duration_minutes: 90, price_note: "from $149", description: null, active: true, cal_event_type_id: null },
+      { id: "s2", business_id: "b1", name: "Old service", duration_minutes: 30, price_note: null, description: null, active: false, cal_event_type_id: 7 },
     ],
     staff: Array.from({ length: staffCount }, (_, i) => ({
       id: `st${i}`,

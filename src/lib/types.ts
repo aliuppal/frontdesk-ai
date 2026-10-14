@@ -1,4 +1,4 @@
-// Row shapes for the tables in db/migrations/0001_init.sql. Timestamps are ISO strings.
+// Row shapes for the tables in db/migrations/*.sql. Timestamps are ISO strings.
 
 export interface Business {
   id: string;
@@ -22,6 +22,8 @@ export interface Business {
   voice_tool_ids: string[]; // ElevenLabs tool ids: [check_availability, book_appointment]
   phone_number: string | null;
   phone_number_id: string | null; // ElevenLabs id of the imported Twilio number
+  whatsapp_phone_number_id: string | null; // Meta phone number id of the WhatsApp Business number
+  whatsapp_number: string | null;
   agent_synced_at: string | null;
   created_at: string;
 }
@@ -42,6 +44,7 @@ export interface Service {
   price_note: string | null;
   description: string | null;
   active: boolean;
+  cal_event_type_id: number | null; // set when the service is a Cal.com event type
 }
 
 export interface Staff {
@@ -70,10 +73,13 @@ export interface TranscriptTurn {
   words?: { word: string; start: number; end: number }[];
 }
 
+export type Channel = "phone" | "whatsapp" | "web";
+
 export interface Call {
   id: string;
   business_id: string;
   conversation_id: string; // ElevenLabs conversation id
+  channel: Channel;
   status: string;
   from_number: string | null;
   to_number: string | null;
@@ -110,7 +116,8 @@ export interface Appointment {
   customer_email: string | null;
   address: string | null;
   notes: string | null;
-  google_event_id: string | null;
+  cal_booking_uid: string | null; // set when the booking lives in Cal.com
+  google_event_id: string | null; // legacy, unused since Cal.com replaced Google Calendar
   calendar_sync_error: string | null;
   created_at: string;
 }

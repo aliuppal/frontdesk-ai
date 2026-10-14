@@ -98,6 +98,7 @@ export default async function Calls({ searchParams }: PageProps<"/dashboard/call
                       {(c.extracted?.caller_name as string) || formatPhone(c.from_number) || "Browser test call"}
                     </Link>
                     {c.extracted?.caller_name ? <div className="text-[13px] text-muted tabular">{formatPhone(c.from_number)}</div> : null}
+                    {c.channel === "whatsapp" && <span className="badge mt-1">WhatsApp</span>}
                   </td>
                   <td className="whitespace-nowrap tabular">{fmtDateTime(c.started_at, b.timezone)}</td>
                   <td className="tabular">{fmtDuration(c.duration_seconds)}</td>

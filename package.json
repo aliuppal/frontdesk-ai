@@ -17,7 +17,6 @@
     "@elevenlabs/elevenlabs-js": "2.69.0",
     "@neondatabase/serverless": "^1.2.0",
     "@vercel/blob": "^2.8.1",
-    "googleapis": "^185.0.0",
     "luxon": "^3.7.2",
     "next": "16.4.0",
     "react": "19.3.0",

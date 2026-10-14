@@ -27,6 +27,8 @@ interface TranscriptionData {
     cost?: number;
     termination_reason?: string;
     phone_call?: { external_number?: string; agent_number?: string; direction?: string };
+    // WhatsApp calls and chats: the user id is the customer's phone number in international format.
+    whatsapp?: { whatsapp_user_id?: string; whatsapp_phone_number_id?: string };
   };
   analysis?: {
     transcript_summary?: string;
@@ -57,7 +59,9 @@ export async function POST(req: Request) {
 
 async function saveTranscription(businessId: string, d: TranscriptionData) {
   const m = d.metadata ?? {};
-  const from = m.phone_call?.external_number ? normalizePhone(m.phone_call.external_number) : null;
+  const channel = m.whatsapp ? "whatsapp" : m.phone_call ? "phone" : "web";
+  const rawFrom = m.whatsapp?.whatsapp_user_id ?? m.phone_call?.external_number;
+  const from = rawFrom ? normalizePhone(rawFrom) : null;
   const started = m.start_time_unix_secs ? new Date(m.start_time_unix_secs * 1000) : null;
   const duration = m.call_duration_secs ?? null;
   const ended = started && duration != null ? new Date(started.getTime() + duration * 1000) : null;
@@ -76,10 +80,10 @@ async function saveTranscription(businessId: string, d: TranscriptionData) {
   const outcome = d.analysis?.call_successful;
 
   await sql`
-    insert into calls (business_id, conversation_id, status, from_number, to_number, started_at, ended_at, duration_seconds,
+    insert into calls (business_id, conversation_id, channel, status, from_number, to_number, started_at, ended_at, duration_seconds,
                        transcript, transcript_json, summary, successful, extracted, disconnection_reason, cost_cents,
                        appointment_booked, customer_id)
-    values (${businessId}, ${d.conversation_id}, 'ended', ${from}, ${m.phone_call?.agent_number ?? null},
+    values (${businessId}, ${d.conversation_id}, ${channel}, 'ended', ${from}, ${m.phone_call?.agent_number ?? null},
             ${started?.toISOString() ?? null}, ${ended?.toISOString() ?? null}, ${duration},
             ${transcript}, ${JSON.stringify(turns)}::jsonb, ${d.analysis?.transcript_summary ?? null},
             ${outcome === "success" ? true : outcome === "failure" ? false : null}, ${JSON.stringify(extracted)}::jsonb,
@@ -88,6 +92,7 @@ async function saveTranscription(businessId: string, d: TranscriptionData) {
             (select id from customers where business_id = ${businessId} and phone = ${from}))
     on conflict (conversation_id) do update set
       status = 'ended',
+      channel = excluded.channel,
       from_number = coalesce(excluded.from_number, calls.from_number),
       to_number = coalesce(excluded.to_number, calls.to_number),
       started_at = coalesce(excluded.started_at, calls.started_at),

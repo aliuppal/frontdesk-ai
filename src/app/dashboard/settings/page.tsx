@@ -3,11 +3,25 @@ import { Notice, PageHeader } from "@/components/ui";
 import { TestCallButton } from "@/components/TestCallButton";
 import { loadBusinessConfig, requireBusiness } from "@/lib/business";
 import { formatPhone } from "@/lib/booking/phone";
-import { calendarConnection, calendarFor, listCalendars } from "@/lib/calendar/google";
+import { calConnection } from "@/lib/calendar/calcom";
 import { isConfigured } from "@/lib/env";
 import { US_TIMEZONES } from "@/lib/format";
+import { listWhatsAppNumbers, type WhatsAppNumber } from "@/lib/voice/elevenlabs";
 import { INDUSTRIES } from "@/lib/voice/prompt";
-import { activateAgent, deleteService, disconnectCalendar, removeStaff, saveHours, saveProfile, saveService, saveStaff } from "./actions";
+import {
+  activateAgent,
+  connectCalendar,
+  connectWhatsApp,
+  deleteService,
+  disconnectCalendar,
+  disconnectWhatsApp,
+  refreshCalendar,
+  removeStaff,
+  saveHours,
+  saveProfile,
+  saveService,
+  saveStaff,
+} from "./actions";
 
 export const metadata = { title: "Settings" };
 
@@ -26,31 +40,27 @@ function Section({ id, title, sub, children }: { id: string; title: string; sub?
 export default async function Settings({ searchParams }: PageProps<"/dashboard/settings">) {
   const sp = (await searchParams) as Record<string, string | undefined>;
   const { business } = await requireBusiness();
-  const [config, connection] = await Promise.all([loadBusinessConfig(business.id), calendarConnection(business.id)]);
+  const [config, connection] = await Promise.all([loadBusinessConfig(business.id), calConnection(business.id)]);
   const b = config.business;
   const voiceReady = isConfigured("ELEVENLABS_API_KEY");
   const twilioReady = isConfigured("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN");
-  const googleReady = isConfigured("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET");
 
-  let calendars: { id: string; name: string }[] = [];
-  let calendarProblem = false;
-  if (connection) {
+  // WhatsApp numbers connected in the ElevenLabs workspace that this business can use.
+  let whatsappNumbers: WhatsAppNumber[] = [];
+  let whatsappError = false;
+  if (voiceReady) {
     try {
-      const cal = await calendarFor(b.id);
-      if (cal) calendars = await listCalendars(cal);
+      whatsappNumbers = await listWhatsAppNumbers();
     } catch {
-      calendarProblem = true;
+      whatsappError = true;
     }
   }
+  const whatsappChoices = whatsappNumbers.filter((n) => !n.assignedAgentId || n.assignedAgentId === b.voice_agent_id);
 
   const hoursByDay = new Map(config.hours.map((h) => [h.weekday, h]));
   const activeServices = config.services.filter((s) => s.active);
   const servicesByStaff = new Map<string, Set<string>>();
   for (const r of config.staffServices) servicesByStaff.set(r.staff_id, (servicesByStaff.get(r.staff_id) ?? new Set()).add(r.service_id));
-  const calendarOptions = (current: string) => {
-    const list = calendars.length ? calendars : [{ id: "primary", name: "Primary calendar" }];
-    return list.some((c) => c.id === current) ? list : [{ id: current, name: current }, ...list];
-  };
 
   return (
     <>
@@ -59,8 +69,6 @@ export default async function Settings({ searchParams }: PageProps<"/dashboard/s
       {sp.welcome && <Notice>You&apos;re in. Connect your calendar, check your hours, then switch the agent on.</Notice>}
       {sp.saved && <Notice>Saved{b.voice_agent_id && sp.saved !== "calendar" ? " and sent to your agent" : ""}.</Notice>}
       {sp.error && <Notice tone="bad">{sp.error}</Notice>}
-      {sp.calendar === "connected" && <Notice>Google Calendar connected. The agent will only offer times you&apos;re free.</Notice>}
-      {sp.calendar === "error" && <Notice tone="bad">Google Calendar didn&apos;t connect. Please try again.</Notice>}
 
       <div className="space-y-6">
         <Section id="agent" title="Phone agent">
@@ -116,7 +124,7 @@ export default async function Settings({ searchParams }: PageProps<"/dashboard/s
                 {voiceReady
                   ? `Switching on sets up your ElevenLabs voice agent from the settings below${twilioReady ? ` and gives it a local ${b.area_code ? `(${b.area_code}) ` : ""}number` : ""}.`
                   : "The voice service isn't connected on this server yet (ELEVENLABS_API_KEY is missing). Everything else can be set up now."}
-                {voiceReady && !connection && " Connect Google Calendar first so it can see when you're busy."}
+                {voiceReady && !connection && " Connect Cal.com first so it books into your real schedule."}
               </p>
               <form action={activateAgent}>
                 <button className="btn btn-primary" disabled={!voiceReady || !activeServices.length || !config.hours.length}>
@@ -125,28 +133,82 @@ export default async function Settings({ searchParams }: PageProps<"/dashboard/s
               </form>
             </div>
           )}
+
+          {/* WhatsApp: same agent answers WhatsApp calls and chats. Calls customers start are free on Meta's side. */}
+          <div className="border-t border-black/5 mt-6 pt-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="max-w-lg">
+                <h3 className="text-base flex items-center gap-2">
+                  WhatsApp {b.whatsapp_number && <span className="badge badge-ok">Answering calls &amp; chats</span>}
+                </h3>
+                {b.whatsapp_number ? (
+                  <p className="text-sm text-muted mt-1">
+                    Customers can call or message <strong className="text-fg tabular">{b.whatsapp_number}</strong> on WhatsApp. Calls they start cost nothing on
+                    WhatsApp&apos;s side; the AI minutes are billed by ElevenLabs.
+                  </p>
+                ) : (
+                  <p className="text-sm text-muted mt-1">
+                    Let customers reach the same agent on WhatsApp, by call or chat. Connect your WhatsApp Business number once in the ElevenLabs dashboard
+                    (Agents → WhatsApp → Import account, then allow voice calls in WhatsApp Manager), then pick it here.
+                  </p>
+                )}
+                {whatsappError && <p className="text-sm text-[var(--bad)] mt-2">Couldn&apos;t load WhatsApp numbers from ElevenLabs.</p>}
+              </div>
+              {b.whatsapp_number ? (
+                <form action={disconnectWhatsApp}>
+                  <button className="btn btn-danger btn-sm">Disconnect WhatsApp</button>
+                </form>
+              ) : whatsappChoices.length ? (
+                <form action={connectWhatsApp} className="flex gap-2 items-center">
+                  <label htmlFor="whatsapp_phone_number_id" className="sr-only">WhatsApp number</label>
+                  <select id="whatsapp_phone_number_id" name="whatsapp_phone_number_id" className="select w-auto">
+                    {whatsappChoices.map((n) => (
+                      <option key={n.phoneNumberId} value={n.phoneNumberId}>
+                        {n.phoneNumber} · {n.name}
+                        {n.tokenExpired ? " (reconnect in ElevenLabs)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <button className="btn btn-primary btn-sm">Use on WhatsApp</button>
+                </form>
+              ) : (
+                voiceReady && !whatsappError && <span className="text-sm text-muted">No WhatsApp numbers connected yet.</span>
+              )}
+            </div>
+            {b.whatsapp_number && !b.voice_agent_id && <p className="text-sm text-[var(--warn)] mt-3">Switch the agent on above so it starts answering on WhatsApp.</p>}
+          </div>
         </Section>
 
-        <Section id="calendar" title="Google Calendar" sub="The agent checks this before offering a time and adds every booking to it.">
+        <Section id="calendar" title="Cal.com" sub="The agent offers only times Cal.com says you're free, and books straight into your Cal.com account.">
           {connection ? (
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="text-sm">
                 <span className="badge badge-ok mr-2">Connected</span>
-                {connection.google_email}
-                {calendarProblem && <p className="text-[var(--bad)] mt-2">We can&apos;t reach this calendar any more. Reconnect it.</p>}
+                cal.com/{connection.username}
+                <p className="text-muted mt-2">
+                  Your Cal.com event types are your bookable services below. Availability, buffers and confirmations come from Cal.com.
+                </p>
               </div>
               <div className="flex gap-2">
-                <a href="/api/google/connect" className="btn btn-ghost btn-sm">Reconnect</a>
+                <form action={refreshCalendar}>
+                  <button className="btn btn-ghost btn-sm">Refresh event types</button>
+                </form>
                 <form action={disconnectCalendar}>
                   <button className="btn btn-danger btn-sm">Disconnect</button>
                 </form>
               </div>
             </div>
-          ) : googleReady ? (
-            <a href="/api/google/connect" className="btn btn-primary">Connect Google Calendar</a>
           ) : (
-            <p className="text-sm text-muted">Google sign-in isn&apos;t configured on this server yet (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET).</p>
+            <form action={connectCalendar} className="grid sm:grid-cols-[1fr_auto] gap-3 items-end max-w-2xl">
+              <div>
+                <label className="label" htmlFor="cal_api_key">Cal.com API key</label>
+                <input className="input font-mono text-[13px]" id="cal_api_key" name="cal_api_key" type="password" autoComplete="off" placeholder="cal_live_…" required />
+                <p className="hint">In Cal.com: Settings → Developer → API keys → create a key. It&apos;s stored encrypted.</p>
+              </div>
+              <button className="btn btn-primary">Connect Cal.com</button>
+            </form>
           )}
+          {!connection && <p className="text-sm text-muted mt-4">Without Cal.com, the agent books from the opening hours below and your own appointment list.</p>}
         </Section>
 
         <Section id="profile" title="Business and how the agent talks">
@@ -286,6 +348,7 @@ export default async function Settings({ searchParams }: PageProps<"/dashboard/s
                 <div className="sm:col-span-3 flex flex-wrap items-center gap-3">
                   <label className="flex items-center gap-2 text-sm mr-auto">
                     <input type="checkbox" name="active" defaultChecked={s.active} /> Bookable
+                    {s.cal_event_type_id ? <span className="badge ml-1">Cal.com · books into Cal.com</span> : <span className="badge ml-1">Built-in schedule</span>}
                   </label>
                   <button className="btn btn-primary btn-sm">Save</button>
                   <button formAction={deleteService} className="btn btn-danger btn-sm">Delete</button>
@@ -306,23 +369,18 @@ export default async function Settings({ searchParams }: PageProps<"/dashboard/s
           </div>
         </Section>
 
-        <Section id="staff" title="Team and calendars" sub="Add people if they keep their own calendar. Callers can ask for someone by name, or take whoever is free first.">
-          {!connection && <p className="text-sm text-muted mb-4">Connect Google Calendar to pick which calendar each person uses.</p>}
+        <Section
+          id="staff"
+          title="Team"
+          sub="For services on the built-in schedule: callers can ask for someone by name, or take whoever is free first. Cal.com services use the hosts set up in Cal.com."
+        >
           <div className="space-y-3">
             {config.staff.map((s) => (
               <form key={s.id} action={saveStaff} className={`well p-4 grid sm:grid-cols-2 gap-3 ${s.active ? "" : "opacity-60"}`}>
                 <input type="hidden" name="id" value={s.id} />
-                <div>
+                <div className="sm:col-span-2">
                   <label className="label" htmlFor={`tn-${s.id}`}>Name</label>
                   <input className="input" id={`tn-${s.id}`} name="name" defaultValue={s.name} required />
-                </div>
-                <div>
-                  <label className="label" htmlFor={`tc-${s.id}`}>Calendar</label>
-                  <select className="select" id={`tc-${s.id}`} name="calendar_id" defaultValue={s.calendar_id}>
-                    {calendarOptions(s.calendar_id).map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
                 </div>
                 {activeServices.length > 1 && (
                   <fieldset className="sm:col-span-2">
@@ -348,18 +406,10 @@ export default async function Settings({ searchParams }: PageProps<"/dashboard/s
                 </div>
               </form>
             ))}
-            <form action={saveStaff} className="grid sm:grid-cols-[1fr_1fr_auto] gap-3 items-end pt-2">
+            <form action={saveStaff} className="grid sm:grid-cols-[1fr_auto] gap-3 items-end pt-2">
               <div>
                 <label className="label" htmlFor="new-staff">Add a team member</label>
                 <input className="input" id="new-staff" name="name" placeholder="e.g. Maria" required />
-              </div>
-              <div>
-                <label className="label" htmlFor="new-staff-cal">Their calendar</label>
-                <select className="select" id="new-staff-cal" name="calendar_id" defaultValue="primary">
-                  {calendarOptions("primary").map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
               </div>
               <button className="btn btn-ghost">Add</button>
             </form>
