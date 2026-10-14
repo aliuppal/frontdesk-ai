@@ -25,7 +25,7 @@ export default async function CallDetail({ params }: PageProps<"/dashboard/calls
   const call = await one<Call>(sql`select * from calls where id = ${id} and business_id = ${b.id}`);
   if (!call) notFound();
   const appointments = await sql<Appointment>`
-    select * from appointments where retell_call_id = ${call.retell_call_id} and business_id = ${b.id} order by starts_at`;
+    select * from appointments where conversation_id = ${call.conversation_id} and business_id = ${b.id} order by starts_at`;
 
   const turns: Turn[] = (call.transcript_json ?? []).map((t) => ({ role: t.role, content: t.content, start: t.words?.[0]?.start ?? null }));
   const name = (call.extracted?.caller_name as string) || formatPhone(call.from_number) || "Browser test call";

@@ -19,9 +19,9 @@ export async function loadBusinessConfig(businessId: string): Promise<BusinessCo
   return { business, hours, services, staff, staffServices };
 }
 
-/** Business id behind a Retell agent. Tool calls are trusted only after signature verification. */
+/** Business id behind an ElevenLabs agent (used by the post-call webhook after signature verification). */
 export async function businessIdForAgent(agentId: string): Promise<string | null> {
-  const row = await one<{ id: string }>(sql`select id from businesses where retell_agent_id = ${agentId}`);
+  const row = await one<{ id: string }>(sql`select id from businesses where voice_agent_id = ${agentId}`);
   return row?.id ?? null;
 }
 

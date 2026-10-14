@@ -17,10 +17,10 @@ export default async function Appointments({ searchParams }: PageProps<"/dashboa
   const [appts, staff] = await Promise.all([
     past
       ? sql<Appointment & { call_id: string | null }>`
-          select a.*, c.id as call_id from appointments a left join calls c on c.retell_call_id = a.retell_call_id
+          select a.*, c.id as call_id from appointments a left join calls c on c.conversation_id = a.conversation_id
           where a.business_id = ${b.id} and a.starts_at < now() order by a.starts_at desc limit 200`
       : sql<Appointment & { call_id: string | null }>`
-          select a.*, c.id as call_id from appointments a left join calls c on c.retell_call_id = a.retell_call_id
+          select a.*, c.id as call_id from appointments a left join calls c on c.conversation_id = a.conversation_id
           where a.business_id = ${b.id} and a.starts_at >= now() order by a.starts_at limit 200`,
     sql<{ id: string; name: string }>`select id, name from staff where business_id = ${b.id}`,
   ]);

@@ -1,15 +1,15 @@
 import { NextResponse } from "next/server";
 import { requireBusiness } from "@/lib/business";
-import { createTestWebCall } from "@/lib/voice/retell";
+import { createTestSessionUrl } from "@/lib/voice/elevenlabs";
 
-/** Access token for a browser test call to the owner's own agent. */
+/** Signed URL for a browser test call to the owner's own agent. */
 export async function POST() {
   const { business } = await requireBusiness();
-  if (!business.retell_agent_id) return NextResponse.json({ error: "Activate your phone agent first." }, { status: 400 });
+  if (!business.voice_agent_id) return NextResponse.json({ error: "Switch on your phone agent first." }, { status: 400 });
   try {
-    return NextResponse.json({ accessToken: await createTestWebCall(business.retell_agent_id) });
+    return NextResponse.json({ signedUrl: await createTestSessionUrl(business.voice_agent_id) });
   } catch (err) {
     console.error("test call failed", err);
-    return NextResponse.json({ error: "Couldn't start a test call. Check your Retell API key." }, { status: 502 });
+    return NextResponse.json({ error: "Couldn't start a test call. Check the ElevenLabs API key." }, { status: 502 });
   }
 }

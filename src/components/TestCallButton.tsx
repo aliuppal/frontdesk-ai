@@ -1,46 +1,44 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { RetellWebClient } from "retell-client-js-sdk";
+import { Conversation } from "@elevenlabs/client";
 
 type State = "idle" | "connecting" | "live" | "ended" | "error";
+type Session = Awaited<ReturnType<typeof Conversation.startSession>>;
 
 /** Talk to your own agent through the browser mic. Calls made this way appear in Calls as "Browser test call". */
 export function TestCallButton({ disabled }: { disabled?: boolean }) {
-  const client = useRef<RetellWebClient | null>(null);
+  const session = useRef<Session | null>(null);
   const [state, setState] = useState<State>("idle");
   const [error, setError] = useState<string | null>(null);
   const [lines, setLines] = useState<{ role: string; content: string }[]>([]);
   const [agentTalking, setAgentTalking] = useState(false);
 
-  useEffect(() => () => client.current?.stopCall(), []);
+  useEffect(() => () => void session.current?.endSession(), []);
 
   async function start() {
     setError(null);
     setLines([]);
     setState("connecting");
     try {
+      await navigator.mediaDevices.getUserMedia({ audio: true }); // ask for the mic up front, with a clear prompt
       const res = await fetch("/api/test-call", { method: "POST" });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Couldn't start the call");
-      const c = new RetellWebClient();
-      client.current = c;
-      c.on("call_started", () => setState("live"));
-      c.on("call_ended", () => {
-        setState("ended");
-        setAgentTalking(false);
+      session.current = await Conversation.startSession({
+        signedUrl: body.signedUrl,
+        onConnect: () => setState("live"),
+        onDisconnect: () => {
+          setState("ended");
+          setAgentTalking(false);
+        },
+        onModeChange: ({ mode }) => setAgentTalking(mode === "speaking"),
+        onMessage: ({ role, message }) => setLines((cur) => [...cur, { role, content: message }].slice(-6)),
+        onError: (message) => {
+          setError(message);
+          setState("error");
+        },
       });
-      c.on("agent_start_talking", () => setAgentTalking(true));
-      c.on("agent_stop_talking", () => setAgentTalking(false));
-      c.on("update", (u: { transcript?: { role: string; content: string }[] }) => {
-        if (u.transcript) setLines(u.transcript.slice(-6));
-      });
-      c.on("error", (e: unknown) => {
-        setError(e instanceof Error ? e.message : String(e));
-        setState("error");
-        c.stopCall();
-      });
-      await c.startCall({ accessToken: body.accessToken });
     } catch (e) {
       setError((e as Error).message);
       setState("error");
@@ -51,7 +49,7 @@ export function TestCallButton({ disabled }: { disabled?: boolean }) {
   return (
     <div>
       {live ? (
-        <button type="button" className="btn btn-danger" onClick={() => client.current?.stopCall()}>
+        <button type="button" className="btn btn-danger" onClick={() => session.current?.endSession()}>
           <span className={`size-2 rounded-full bg-[var(--bad)] ${agentTalking ? "animate-pulse" : ""}`} aria-hidden />
           {state === "connecting" ? "Connecting…" : "End test call"}
         </button>

@@ -10,18 +10,19 @@ Design spec: [docs/superpowers/specs/2026-10-14-voice-booking-agent-design.md](d
 ## How it works
 
 ```
-Caller → Retell phone number → Retell agent (speech ↔ LLM ↔ voice)
-                                   │ signed HTTPS
-                                   ▼
+Caller → Twilio number → ElevenLabs agent (speech ↔ LLM ↔ ElevenLabs voice)
+                               │ HTTPS + per-business x-frontdesk-key
+                               ▼
              /api/tools/check-availability  → Google free/busy + booked appointments (Neon)
              /api/tools/book-appointment    → appointment row + Google event + Resend emails
-             /api/retell/webhook            → call row, transcript, summary; recording → Vercel Blob (private)
+             /api/voice/webhook (signed)    → transcript, summary, extracted fields; MP3 → Vercel Blob (private)
 Owner → /dashboard (email + password login, sessions in Neon; every query scoped to the owner's business)
 ```
 
 | Piece | Service | Notes |
 |---|---|---|
-| Phone number, speech, voice, call LLM | [Retell AI](https://retellai.com) | ~$0.07–0.15/min all-in, ~$2/month per number |
+| Speech, call LLM, voice | [ElevenLabs Agents](https://elevenlabs.io/agents) | Billed per call minute by ElevenLabs plan |
+| Phone numbers | [Twilio](https://twilio.com) | ~$1.15/month per local number + per-minute voice |
 | Database | [Neon](https://neon.tech) Postgres | Accounts, sessions, businesses, calls, appointments |
 | Call recordings | Vercel Blob (private store) | Streamed to owners through `/api/recordings/[callId]` |
 | Calendar | Google Calendar API | Each business connects its own Google account |
@@ -39,8 +40,13 @@ The site runs with only those two settings. Each integration switches on when it
 
 - **Recordings:** in Vercel → Storage, create a **private** Blob store and connect it to the project
   (adds `BLOB_READ_WRITE_TOKEN`).
-- **Phone agent:** add `RETELL_API_KEY`. Retell must reach the tool and webhook URLs, so test real calls on
-  the deployed site (or through `ngrok http 3000` with `NEXT_PUBLIC_APP_URL` set to the tunnel).
+- **Voice agent:** add `ELEVENLABS_API_KEY`, then run `npm run elevenlabs:setup -- https://<your-app>` once.
+  It creates the signed post-call webhook and turns on transcript + audio delivery; put the printed
+  `ELEVENLABS_WEBHOOK_SECRET` in Vercel. With only these, owners can switch the agent on and talk to it in
+  the browser.
+- **Phone numbers:** add `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN`. "Switch on my phone agent" (or "Update
+  agent now") then buys a local number and imports it into ElevenLabs, assigned to that business's agent.
+  ElevenLabs must reach the tool and webhook URLs, so test calls against the deployed site.
 - **Google Calendar:** enable the Calendar API, create an OAuth web client with redirect URI
   `<APP_URL>/api/google/callback`, add the calendar scopes to the consent screen, and add owners as test
   users while the app is in Testing mode. Set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`.
@@ -69,9 +75,10 @@ Code map:
 - `src/lib/booking/availability.ts`: pure slot maths (hours, buffers, notice, DST, multi-staff)
 - `src/lib/booking/booking-service.ts`: availability + booking orchestration used by the agent tools
 - `src/lib/voice/prompt.ts`: builds the agent prompt, tools and post-call analysis from settings
-- `src/lib/voice/retell.ts`: the only Retell API client (provision/sync agent, verify signatures)
+- `src/lib/voice/elevenlabs.ts`: the only ElevenLabs client (agent + tools + number sync, test sessions, webhook signatures)
+- `src/lib/voice/twilio.ts`: buys local numbers for new agents
 - `src/lib/db.ts`, `src/lib/auth.ts`: Neon client and email/password sessions
-- `src/app/api/retell/webhook`: call lifecycle → `calls` table, recording copy
+- `src/app/api/voice/webhook`: post-call transcript/audio → `calls` table and private Blob
 - `src/app/dashboard/*`: the owner website
 
 ## Not built yet

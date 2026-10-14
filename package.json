@@ -9,9 +9,12 @@
     "lint": "eslint",
     "test": "vitest run",
     "db:migrate": "node --env-file-if-exists=.env.local scripts/migrate.mjs",
-    "seed:demo": "node --env-file-if-exists=.env.local scripts/seed-demo.mjs"
+    "seed:demo": "node --env-file-if-exists=.env.local scripts/seed-demo.mjs",
+    "elevenlabs:setup": "node --env-file-if-exists=.env.local scripts/elevenlabs-setup.mjs"
   },
   "dependencies": {
+    "@elevenlabs/client": "1.26.0",
+    "@elevenlabs/elevenlabs-js": "2.69.0",
     "@neondatabase/serverless": "^1.2.0",
     "@vercel/blob": "^2.8.1",
     "googleapis": "^185.0.0",
@@ -20,8 +23,6 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "resend": "^6.32.1",
-    "retell-client-js-sdk": "^3.0.2",
-    "retell-sdk": "^6.2.5",
     "server-only": "^0.0.1",
     "zod": "^4.6.7"
   },

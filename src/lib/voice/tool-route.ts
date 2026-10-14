@@ -1,44 +1,37 @@
 import "server-only";
 import { NextResponse } from "next/server";
-import { businessIdForAgent } from "../business";
-import { verifyRetellRequest, type RetellToolRequest } from "./retell";
+import { verifyToolKey } from "../crypto";
 import type { ToolReply } from "../booking/booking-service";
 
-type Handler = (ctx: { businessId: string; callId: string; args: Record<string, unknown> }) => Promise<ToolReply>;
+type Handler = (ctx: { businessId: string; callId: string | null; args: Record<string, unknown> }) => Promise<ToolReply>;
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Shared wrapper for agent tool endpoints: verify Retell's signature, resolve the business from the
- * agent id (never from caller-controlled args), and always answer 200 with something sayable.
+ * Shared wrapper for agent tool endpoints. The agent's tool config carries ?b=<businessId> and an
+ * x-frontdesk-key derived from it (see toolKey), so the business comes from a value only we can sign,
+ * never from what the caller says. Always answers 200 with something the agent can say.
  */
 export function toolRoute(name: string, handler: Handler) {
   return async function POST(req: Request) {
-    const raw = await req.text();
-    if (!(await verifyRetellRequest(raw, req.headers.get("x-retell-signature")))) {
-      return NextResponse.json({ error: "invalid signature" }, { status: 401 });
+    const businessId = new URL(req.url).searchParams.get("b") ?? "";
+    if (!UUID.test(businessId) || !verifyToolKey(businessId, req.headers.get("x-frontdesk-key"))) {
+      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
 
-    let body: RetellToolRequest;
+    let body: Record<string, unknown>;
     try {
-      body = JSON.parse(raw);
+      body = await req.json();
     } catch {
       return NextResponse.json({ error: "bad json" }, { status: 400 });
     }
-
-    let businessId: string | null = null;
-    try {
-      businessId = body.call?.agent_id ? await businessIdForAgent(body.call.agent_id) : null;
-    } catch (err) {
-      console.error(`tool ${name}: business lookup failed`, err);
-    }
-    if (!businessId) {
-      return NextResponse.json({ result: "This line isn't set up for booking yet. Take a message for the team." });
-    }
+    const { conversation_id, ...args } = body;
+    const callId = typeof conversation_id === "string" && conversation_id ? conversation_id : null;
 
     try {
-      const reply = await handler({ businessId, callId: body.call.call_id, args: body.args ?? {} });
-      return NextResponse.json(reply);
+      return NextResponse.json(await handler({ businessId, callId, args }));
     } catch (err) {
-      console.error(`tool ${name} failed`, { businessId, callId: body.call.call_id }, err);
+      console.error(`tool ${name} failed`, { businessId, callId }, err);
       return NextResponse.json({
         result: "Something went wrong on our side. Take the caller's name, number and what they need, and tell them the team will call back.",
         error: "internal",

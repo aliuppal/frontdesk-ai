@@ -116,7 +116,7 @@ try {
     for (const c of calls) {
       const start = at(-c.hoursAgo);
       await db.query(
-        `insert into calls (business_id, retell_call_id, status, from_number, to_number, started_at, ended_at, duration_seconds, transcript,
+        `insert into calls (business_id, conversation_id, status, from_number, to_number, started_at, ended_at, duration_seconds, transcript,
                             transcript_json, summary, sentiment, successful, appointment_booked, extracted, disconnection_reason, customer_id)
          values ($1, $2, 'ended', $3, '+15125550100', $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13::jsonb, 'user_hangup', $14)`,
         [b.id, c.id, c.from, start, new Date(start.getTime() + c.dur * 1000), c.dur, c.lines.map(([r, t]) => `${r}: ${t}`).join("\n"),
@@ -132,7 +132,7 @@ try {
     ];
     for (const [customer, service, staffId, callId, name, start, mins, cname, phone, mail, address, notes] of appts) {
       await db.query(
-        `insert into appointments (business_id, customer_id, service_id, staff_id, retell_call_id, service_name, starts_at, ends_at,
+        `insert into appointments (business_id, customer_id, service_id, staff_id, conversation_id, service_name, starts_at, ends_at,
                                    customer_name, customer_phone, customer_email, address, notes, status)
          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
         [b.id, customer, service, staffId, callId, name, start, new Date(start.getTime() + mins * 60_000), cname, phone, mail, address, notes,

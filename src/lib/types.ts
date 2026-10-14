@@ -18,9 +18,10 @@ export interface Business {
   requires_address: boolean;
   voice_id: string;
   area_code: number | null;
-  retell_llm_id: string | null;
-  retell_agent_id: string | null;
+  voice_agent_id: string | null; // ElevenLabs agent id
+  voice_tool_ids: string[]; // ElevenLabs tool ids: [check_availability, book_appointment]
   phone_number: string | null;
+  phone_number_id: string | null; // ElevenLabs id of the imported Twilio number
   agent_synced_at: string | null;
   created_at: string;
 }
@@ -72,7 +73,7 @@ export interface TranscriptTurn {
 export interface Call {
   id: string;
   business_id: string;
-  retell_call_id: string;
+  conversation_id: string; // ElevenLabs conversation id
   status: string;
   from_number: string | null;
   to_number: string | null;
@@ -99,7 +100,7 @@ export interface Appointment {
   customer_id: string | null;
   service_id: string | null;
   staff_id: string;
-  retell_call_id: string | null;
+  conversation_id: string | null;
   service_name: string;
   starts_at: string;
   ends_at: string;

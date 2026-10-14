@@ -145,7 +145,7 @@ export interface BookingOutcome {
 }
 
 const existingBooking = (callId: string, startIso: string) =>
-  one<Appointment>(sql`select * from appointments where retell_call_id = ${callId} and starts_at = ${startIso} and status = 'booked'`);
+  one<Appointment>(sql`select * from appointments where conversation_id = ${callId} and starts_at = ${startIso} and status = 'booked'`);
 
 export async function bookAppointment(businessId: string, callId: string | null, rawArgs: unknown, now = new Date()): Promise<BookingOutcome> {
   const parsed = bookArgs.safeParse(rawArgs);
@@ -170,7 +170,7 @@ export async function bookAppointment(businessId: string, callId: string | null,
     business: b,
   });
 
-  // Retell retries or the model calling twice must not create two bookings.
+  // Tool retries or the model calling twice must not create two bookings.
   if (callId) {
     const existing = await existingBooking(callId, startIso);
     if (existing) return already(existing);
@@ -221,7 +221,7 @@ export async function bookAppointment(businessId: string, callId: string | null,
   let appt: Appointment | null;
   try {
     appt = await one<Appointment>(sql`
-      insert into appointments (business_id, customer_id, service_id, staff_id, retell_call_id, service_name, starts_at, ends_at,
+      insert into appointments (business_id, customer_id, service_id, staff_id, conversation_id, service_name, starts_at, ends_at,
                                 customer_name, customer_phone, customer_email, address, notes)
       values (${b.id}, ${customerId}, ${service.id}, ${chosen.id}, ${callId}, ${service.name}, ${slot.start.toISOString()},
               ${slot.end.toISOString()}, ${name}, ${phone}, ${email}, ${address}, ${notes})
@@ -262,12 +262,12 @@ export async function bookAppointment(businessId: string, callId: string | null,
   }
 
   if (callId) {
-    await sql`update calls set appointment_booked = true, customer_id = coalesce(${customerId}, customer_id) where retell_call_id = ${callId}`;
+    await sql`update calls set appointment_booked = true, customer_id = coalesce(${customerId}, customer_id) where conversation_id = ${callId}`;
   }
 
   return {
     reply: {
-      result: `Booked: ${service.name} on ${spokenLabel(slot.start, tz)}${config.staff.length > 1 ? ` with ${chosen.name}` : ""}.${email ? " A confirmation email is on its way." : ""}`,
+      result: `${`Booked: ${service.name} on ${spokenLabel(slot.start, tz)}${config.staff.length > 1 ? ` with ${chosen.name}` : ""}`.replace(/\.$/, "")}.${email ? " A confirmation email is on its way." : ""}`,
       appointment_id: appt.id,
     },
     appointment: appt,

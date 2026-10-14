@@ -19,6 +19,21 @@ export function decrypt(payload: string): string {
   return Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");
 }
 
+/**
+ * Per-business secret the voice agent sends with every tool call (x-frontdesk-key). Derived, so nothing
+ * extra is stored; a request for business A can't be forged without ENCRYPTION_KEY.
+ */
+export function toolKey(businessId: string): string {
+  return createHmac("sha256", key()).update(`voice-tool:${businessId}`).digest("hex");
+}
+
+export function verifyToolKey(businessId: string, given: string | null): boolean {
+  if (!given) return false;
+  const expected = Buffer.from(toolKey(businessId));
+  const actual = Buffer.from(given);
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
 /** Signed, expiring token for OAuth `state`, so a callback can't be replayed onto another business. */
 export function signState(payload: Record<string, string>, ttlSeconds = 600): string {
   const body = Buffer.from(JSON.stringify({ ...payload, exp: Date.now() + ttlSeconds * 1000 })).toString("base64url");

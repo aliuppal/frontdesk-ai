@@ -28,7 +28,8 @@ export default async function Settings({ searchParams }: PageProps<"/dashboard/s
   const { business } = await requireBusiness();
   const [config, connection] = await Promise.all([loadBusinessConfig(business.id), calendarConnection(business.id)]);
   const b = config.business;
-  const retellReady = isConfigured("RETELL_API_KEY");
+  const voiceReady = isConfigured("ELEVENLABS_API_KEY");
+  const twilioReady = isConfigured("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN");
   const googleReady = isConfigured("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET");
 
   let calendars: { id: string; name: string }[] = [];
@@ -56,7 +57,7 @@ export default async function Settings({ searchParams }: PageProps<"/dashboard/s
       <PageHeader title="Settings" sub="Everything your phone agent knows and does. Changes go live on the next call." />
 
       {sp.welcome && <Notice>You&apos;re in. Connect your calendar, check your hours, then switch the agent on.</Notice>}
-      {sp.saved && <Notice>Saved{b.retell_agent_id && sp.saved !== "calendar" ? " and sent to your agent" : ""}.</Notice>}
+      {sp.saved && <Notice>Saved{b.voice_agent_id && sp.saved !== "calendar" ? " and sent to your agent" : ""}.</Notice>}
       {sp.error && <Notice tone="bad">{sp.error}</Notice>}
       {sp.calendar === "connected" && <Notice>Google Calendar connected. The agent will only offer times you&apos;re free.</Notice>}
       {sp.calendar === "error" && <Notice tone="bad">Google Calendar didn&apos;t connect. Please try again.</Notice>}
@@ -91,16 +92,34 @@ export default async function Settings({ searchParams }: PageProps<"/dashboard/s
                 </form>
               </div>
             </div>
+          ) : b.voice_agent_id ? (
+            <div className="grid md:grid-cols-[1fr_auto] gap-6 items-start">
+              <div>
+                <span className="badge badge-warn">Ready to test · no phone number yet</span>
+                <p className="text-sm text-muted mt-3 max-w-lg">
+                  Your agent is set up on ElevenLabs. Talk to it in your browser now.{" "}
+                  {twilioReady
+                    ? "Click “Update agent now” to get its local phone number."
+                    : "A phone number is added automatically once Twilio is connected on this server (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN)."}
+                </p>
+              </div>
+              <div className="flex flex-col gap-3 items-start md:items-end">
+                <TestCallButton />
+                <form action={activateAgent}>
+                  <button className="btn btn-ghost btn-sm">Update agent now</button>
+                </form>
+              </div>
+            </div>
           ) : (
             <div className="flex flex-wrap items-center justify-between gap-4">
               <p className="text-sm text-muted max-w-lg">
-                {retellReady
-                  ? `Switching on buys a local ${b.area_code ? `(${b.area_code}) ` : ""}number and sets up your agent from the settings below.`
-                  : "The phone service isn't connected on this server yet (RETELL_API_KEY is missing). Everything else can be set up now."}
-                {retellReady && !connection && " Connect Google Calendar first so it can see when you're busy."}
+                {voiceReady
+                  ? `Switching on sets up your ElevenLabs voice agent from the settings below${twilioReady ? ` and gives it a local ${b.area_code ? `(${b.area_code}) ` : ""}number` : ""}.`
+                  : "The voice service isn't connected on this server yet (ELEVENLABS_API_KEY is missing). Everything else can be set up now."}
+                {voiceReady && !connection && " Connect Google Calendar first so it can see when you're busy."}
               </p>
               <form action={activateAgent}>
-                <button className="btn btn-primary" disabled={!retellReady || !activeServices.length || !config.hours.length}>
+                <button className="btn btn-primary" disabled={!voiceReady || !activeServices.length || !config.hours.length}>
                   Switch on my phone agent
                 </button>
               </form>
@@ -216,7 +235,7 @@ export default async function Settings({ searchParams }: PageProps<"/dashboard/s
             <div>
               <label className="label" htmlFor="voice_id">Voice</label>
               <input className="input" id="voice_id" name="voice_id" defaultValue={b.voice_id} />
-              <p className="hint">A voice id from the Retell voice library.</p>
+              <p className="hint">An ElevenLabs voice ID (Voice Library → “ID”). Default is “Sarah”.</p>
             </div>
             <div className="sm:col-span-2">
               <button className="btn btn-primary">Save</button>

@@ -6,15 +6,21 @@ import "server-only";
 type Key =
   | "DATABASE_URL"
   | "ENCRYPTION_KEY"
-  | "RETELL_API_KEY"
-  | "RETELL_LLM_MODEL"
+  | "ELEVENLABS_API_KEY"
+  | "ELEVENLABS_WEBHOOK_SECRET"
+  | "ELEVENLABS_LLM"
+  | "TWILIO_ACCOUNT_SID"
+  | "TWILIO_AUTH_TOKEN"
   | "GOOGLE_CLIENT_ID"
   | "GOOGLE_CLIENT_SECRET"
   | "RESEND_API_KEY"
   | "EMAIL_FROM";
 
 const FEATURE: Partial<Record<Key, string>> = {
-  RETELL_API_KEY: "The phone agent",
+  ELEVENLABS_API_KEY: "The phone agent (ElevenLabs)",
+  ELEVENLABS_WEBHOOK_SECRET: "Call history (ElevenLabs webhook)",
+  TWILIO_ACCOUNT_SID: "Phone numbers (Twilio)",
+  TWILIO_AUTH_TOKEN: "Phone numbers (Twilio)",
   GOOGLE_CLIENT_ID: "Google Calendar",
   GOOGLE_CLIENT_SECRET: "Google Calendar",
   RESEND_API_KEY: "Email",
@@ -45,4 +51,5 @@ export function appUrl(): string {
   return "http://localhost:3000";
 }
 
-export const retellModel = () => optional("RETELL_LLM_MODEL") ?? "gpt-4.1-mini";
+/** Conversation model the ElevenLabs agent runs on (billed by ElevenLabs per minute). */
+export const voiceLlm = () => optional("ELEVENLABS_LLM") ?? "gpt-4.1-mini";

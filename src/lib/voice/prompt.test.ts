@@ -20,11 +20,12 @@ function config(overrides: Partial<BusinessConfig["business"]> = {}, staffCount 
       max_days_ahead: 30,
       slot_interval_minutes: 30,
       requires_address: true,
-      voice_id: "retell-Cimo",
+      voice_id: "EXAVITQu4vr4xnSDxMaL",
       area_code: 512,
-      retell_llm_id: null,
-      retell_agent_id: null,
+      voice_agent_id: null,
+      voice_tool_ids: [],
       phone_number: null,
+      phone_number_id: null,
       agent_synced_at: null,
       created_at: "2026-10-14T00:00:00Z",
       ...overrides,
@@ -47,46 +48,47 @@ function config(overrides: Partial<BusinessConfig["business"]> = {}, staffCount 
   };
 }
 
-interface ToolShape {
-  name: string;
-  url?: string;
-  parameters?: { properties: Record<string, { enum?: string[] } | undefined> };
-  transfer_destination?: { number: string };
-}
-const tool = (def: ReturnType<typeof buildAgentDefinition>, name: string) => (def.tools as unknown as ToolShape[]).find((t) => t.name === name);
+const tool = (def: ReturnType<typeof buildAgentDefinition>, name: string) => def.tools.find((t) => t.name === name);
 
 describe("buildAgentDefinition", () => {
   it("describes the business, active services and hours", () => {
-    const def = buildAgentDefinition(config(), "https://app.test");
-    expect(def.generalPrompt).toContain("Riverside Plumbing, a plumbing company");
-    expect(def.generalPrompt).toContain("Drain cleaning (90 minutes): from $149");
-    expect(def.generalPrompt).not.toContain("Old service");
-    expect(def.generalPrompt).toContain("Monday: 8:00 AM–4:00 PM");
-    expect(def.generalPrompt).toContain("{{current_time}}");
-    expect(def.generalPrompt).toContain("service address");
+    const def = buildAgentDefinition(config());
+    expect(def.prompt).toContain("Riverside Plumbing, a plumbing company");
+    expect(def.prompt).toContain("Drain cleaning (90 minutes): from $149");
+    expect(def.prompt).not.toContain("Old service");
+    expect(def.prompt).toContain("Monday: 8:00 AM–4:00 PM");
+    expect(def.prompt).toContain("America/Chicago");
+    expect(def.prompt).toContain("service address");
   });
 
-  it("points tools at this app and limits service to known names", () => {
-    const def = buildAgentDefinition(config(), "https://app.test");
-    expect(tool(def, "check_availability")?.url).toBe("https://app.test/api/tools/check-availability");
-    expect(tool(def, "book_appointment")?.parameters?.properties.service?.enum).toEqual(["Drain cleaning"]);
-    expect(tool(def, "book_appointment")?.parameters?.properties.staff_name).toBeUndefined();
+  it("points tools at our endpoints and limits service to known names", () => {
+    const def = buildAgentDefinition(config());
+    expect(tool(def, "check_availability")?.path).toBe("/api/tools/check-availability");
+    expect(tool(def, "book_appointment")?.params.service?.enum).toEqual(["Drain cleaning"]);
+    expect(tool(def, "book_appointment")?.params.staff_name).toBeUndefined();
+    expect(tool(def, "book_appointment")?.required).toContain("start_time");
   });
 
   it("offers staff choice only with more than one person", () => {
-    const def = buildAgentDefinition(config({}, 2), "https://app.test");
-    expect(tool(def, "check_availability")?.parameters?.properties.staff_name?.enum).toEqual(["Ana", "Ben"]);
+    const def = buildAgentDefinition(config({}, 2));
+    expect(tool(def, "check_availability")?.params.staff_name?.enum).toEqual(["Ana", "Ben"]);
   });
 
-  it("adds a transfer tool only when a transfer number is set", () => {
-    expect(tool(buildAgentDefinition(config(), "x"), "transfer_to_team")).toBeUndefined();
-    const def = buildAgentDefinition(config({ transfer_number: "+15125550100" }), "x");
-    expect(tool(def, "transfer_to_team")?.transfer_destination?.number).toBe("+15125550100");
+  it("only enables transfers when a transfer number is set", () => {
+    expect(buildAgentDefinition(config()).transferNumber).toBeNull();
+    const def = buildAgentDefinition(config({ transfer_number: "+15125550100" }));
+    expect(def.transferNumber).toBe("+15125550100");
+    expect(def.prompt).toContain("transfer them to the team");
   });
 
   it("uses the custom greeting and extra instructions", () => {
-    const def = buildAgentDefinition(config({ greeting: "Riverside, Ana speaking!", agent_instructions: "No work on Sundays." }), "x");
-    expect(def.beginMessage).toBe("Riverside, Ana speaking!");
-    expect(def.generalPrompt).toContain("No work on Sundays.");
+    const def = buildAgentDefinition(config({ greeting: "Riverside, Ana speaking!", agent_instructions: "No work on Sundays." }));
+    expect(def.firstMessage).toBe("Riverside, Ana speaking!");
+    expect(def.prompt).toContain("No work on Sundays.");
+  });
+
+  it("asks the provider to extract the dashboard's call fields", () => {
+    const keys = Object.keys(buildAgentDefinition(config()).dataCollection);
+    expect(keys).toEqual(expect.arrayContaining(["caller_name", "service_requested", "follow_up_needed", "call_reason"]));
   });
 });

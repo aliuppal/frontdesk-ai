@@ -6,7 +6,7 @@ import { z } from "zod";
 import { requireBusiness } from "@/lib/business";
 import { normalizePhone } from "@/lib/booking/phone";
 import { db, one, sql } from "@/lib/db";
-import { syncAgent } from "@/lib/voice/retell";
+import { syncAgent } from "@/lib/voice/elevenlabs";
 import { INDUSTRIES } from "@/lib/voice/prompt";
 
 // Each action: resolve the owner's business from their session, write rows scoped to that business id,
@@ -17,7 +17,7 @@ type Section = "agent" | "calendar" | "profile" | "hours" | "services" | "staff"
 async function finish(section: Section, opts: { sync?: boolean; error?: string } = {}): Promise<never> {
   const { business } = await requireBusiness();
   let syncError: string | undefined;
-  if (opts.sync !== false && business.retell_agent_id && !opts.error) {
+  if (opts.sync !== false && business.voice_agent_id && !opts.error) {
     try {
       await syncAgent(business.id);
     } catch (err) {
@@ -65,7 +65,7 @@ export async function saveProfile(form: FormData) {
       agent_instructions = ${text(form.get("agent_instructions"))},
       transfer_number = ${transfer ? normalizePhone(transfer) : null},
       requires_address = ${form.get("requires_address") === "on"},
-      voice_id = ${text(form.get("voice_id")) ?? "retell-Cimo"},
+      voice_id = ${text(form.get("voice_id")) ?? "EXAVITQu4vr4xnSDxMaL"},
       buffer_minutes = ${int(form.get("buffer_minutes"), 0, 240, 0)},
       min_notice_minutes = ${int(form.get("min_notice_minutes"), 0, 10080, 60)},
       max_days_ahead = ${int(form.get("max_days_ahead"), 1, 365, 30)},
