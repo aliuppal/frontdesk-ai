@@ -39,4 +39,7 @@ export const US_TIMEZONES: [string, string][] = [
   ["America/Los_Angeles", "Pacific"],
   ["America/Anchorage", "Alaska"],
   ["Pacific/Honolulu", "Hawaii"],
+  ["Europe/London", "UK (London)"],
+  ["Asia/Dubai", "UAE (Dubai)"],
+  ["Asia/Karachi", "Pakistan (Karachi)"],
 ];
