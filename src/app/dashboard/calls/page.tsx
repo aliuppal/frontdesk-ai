@@ -5,6 +5,8 @@ import { formatPhone } from "@/lib/booking/phone";
 import { fmtDateTime, fmtDuration } from "@/lib/format";
 import { db } from "@/lib/db";
 import type { Call } from "@/lib/types";
+import { syncConversations } from "@/lib/voice/sync";
+import { refreshCalls } from "./actions";
 
 export const metadata = { title: "Calls" };
 
@@ -22,6 +24,7 @@ export default async function Calls({ searchParams }: PageProps<"/dashboard/call
   const filter = sp.filter ?? "all";
   const page = Math.max(1, Number(sp.page ?? 1) || 1);
   const { business: b } = await requireBusiness();
+  await syncConversations(b.id); // pull any new conversations from ElevenLabs (throttled)
   // Build the WHERE clause from fixed fragments; every user value goes in as a numbered parameter.
   const params: unknown[] = [b.id];
   const where = ["business_id = $1"];
@@ -61,7 +64,15 @@ export default async function Calls({ searchParams }: PageProps<"/dashboard/call
 
   return (
     <>
-      <PageHeader title="Calls" sub={`${count ?? 0} call${count === 1 ? "" : "s"} answered by your agent`} />
+      <PageHeader
+        title="Calls"
+        sub={`${count ?? 0} call${count === 1 ? "" : "s"} answered by your agent`}
+        actions={
+          <form action={refreshCalls}>
+            <button className="btn btn-ghost btn-sm">Refresh</button>
+          </form>
+        }
+      />
 
       <div className="flex flex-wrap items-center gap-3 mb-5">
         <form className="flex-1 min-w-[220px] max-w-md" role="search">

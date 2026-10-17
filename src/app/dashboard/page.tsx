@@ -7,11 +7,13 @@ import { fmtDateTime, fmtDay, fmtDuration, fmtTime } from "@/lib/format";
 import { calConnection } from "@/lib/calendar/calcom";
 import { sql } from "@/lib/db";
 import type { Appointment, Call } from "@/lib/types";
+import { syncConversations } from "@/lib/voice/sync";
 
 export const metadata = { title: "Overview" };
 
 export default async function Overview() {
   const { business: b } = await requireBusiness();
+  await syncConversations(b.id); // pull any new conversations from ElevenLabs (throttled)
   const weekAgo = DateTime.now().minus({ days: 7 }).toISO();
 
   const [calls, recentCalls, upcoming, calendar] = await Promise.all([
