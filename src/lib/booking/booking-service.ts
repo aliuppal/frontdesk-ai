@@ -7,7 +7,7 @@ import { one, pgCode, sql } from "../db";
 import type { Appointment, Business, BusinessConfig, Service, Staff } from "../types";
 import { findSlots, slotsForDate, spokenLabel, spread, type Busy, type BookingRules, type StaffBusy, type TimeOfDay } from "./availability";
 import { pickCalSlots } from "./cal-slots";
-import { normalizePhone } from "./phone";
+import { formatPhone, normalizePhone } from "./phone";
 
 // Orchestrates availability and booking for the voice agent. Every return value has a `result`
 // sentence the agent can say or paraphrase; tools never throw at the caller.
@@ -204,7 +204,9 @@ export async function bookAppointment(businessId: string, callId: string | null,
       const booking = await calCreateBooking(apiKey, {
         eventTypeId: service.cal_event_type_id,
         start: start.toJSDate(),
-        name,
+        // Name plus number, so the calendar entry shows who to call back, e.g.
+        // "Oil change appointment – Ali Uppal · (551) 339-3242" with the event name "{Event type title} appointment – {Scheduler}".
+        name: `${name} · ${formatPhone(phone) || phone}`,
         // Cal.com requires an attendee email; without one the confirmation goes to the business instead.
         email: email ?? b.notification_email,
         phone,
